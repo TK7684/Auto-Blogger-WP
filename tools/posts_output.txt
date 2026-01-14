@@ -1,0 +1,2 @@
+Checking last 5 posts (any status):
+Exception: 'charmap' codec can't encode characters in position 64-78: character maps to <undefined>

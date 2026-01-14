@@ -1,0 +1,26 @@
+# Core dependencies
+requests>=2.32.0
+feedparser>=6.0.0
+google-genai>=1.0.0
+google-auth>=2.20.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# Testing
+pytest>=8.0.0
+
+# Twitter/X API for trending topics
+tweepy>=5.0.0
+
+# News API (fallback for trending topics)
+newsapi-python>=0.2.7
+
+# HTML scraping for SERP analysis (optional, for future enhancement)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Image processing for featured images
+Pillow>=10.0.0
+
+# OpenAI for alternative image generation (optional)
+# openai>=1.0.0

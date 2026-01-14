@@ -1,0 +1,225 @@
+.2026-01-07 10:02:00,736 - INFO - AFC is enabled with max remote calls: 10.
+2026-01-07 10:02:00,861 - INFO - HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent "HTTP/1.1 429 Too Many Requests"
+F2026-01-07 10:02:00,868 - INFO - AFC is enabled with max remote calls: 10.
+2026-01-07 10:02:00,945 - INFO - HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent "HTTP/1.1 429 Too Many Requests"
+Fs..2026-01-07 10:02:02,759 - INFO - ≡ƒºá Generating optimized content for: Topic (daily mode)...
+2026-01-07 10:02:02,759 - INFO - Using service account authentication: C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\gen-lang-client-0692945139-cea8c9e530fc.json
+2026-01-07 10:02:02,797 - INFO - Γ£à Content generated with thinking_level=low
+.2026-01-07 10:02:02,798 - INFO - ≡ƒºá Generating optimized content for: Topic (daily mode)...
+2026-01-07 10:02:02,798 - INFO - Using service account authentication: C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\gen-lang-client-0692945139-cea8c9e530fc.json
+2026-01-07 10:02:02,833 - ERROR - Error generating content: API Error
+F2026-01-07 10:02:02,835 - WARNING - TWITTER_BEARER_TOKEN not configured. Twitter trends unavailable.
+2026-01-07 10:02:02,835 - WARNING - NEWSAPI_KEY not configured. NewsAPI unavailable.
+2026-01-07 10:02:02,835 - INFO - ======================================================================
+2026-01-07 10:02:02,835 - INFO - FETCHING TRENDING TOPIC
+2026-01-07 10:02:02,835 - INFO - ======================================================================
+2026-01-07 10:02:02,835 - INFO - Attempting Twitter/X API...
+.2026-01-07 10:02:02,836 - INFO - Yoast SEO meta fields updated for post 123
+.......2026-01-07 10:02:05,005 - INFO - ≡ƒöì Found 0 competitor articles.
+2026-01-07 10:02:05,006 - INFO - ≡ƒÅá Found 0 of your own articles.
+2026-01-07 10:02:05,006 - INFO - ≡ƒò│∩╕Å Identified 1 content gaps.
+2026-01-07 10:02:05,006 - INFO - ≡ƒÆí Generated 1 article ideas.
+....2026-01-07 10:02:07,581 - INFO - ≡ƒöì Found 1 competitor articles.
+2026-01-07 10:02:07,581 - INFO - ≡ƒÅá Found 1 of your own articles.
+2026-01-07 10:02:07,581 - INFO - ≡ƒò│∩╕Å Identified 1 content gaps.
+2026-01-07 10:02:07,581 - INFO - ≡ƒÆí Generated 1 article ideas.
+........
+======================================================================
+FAIL: test_02_gemini_flash_daily_content_generation (test_integration.TestGeminiAPIIntegration.test_02_gemini_flash_daily_content_generation)
+Test actual content generation with Gemini 3 Flash model.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\tests\test_integration.py", line 50, in test_02_gemini_flash_daily_content_generation
+    response = self.client.models.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\models.py", line 5203, in generate_content
+    response = self._generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\models.py", line 3985, in _generate_content
+    response = self._api_client.request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\_api_client.py", line 1388, in request
+    response = self._request(http_request, http_options, stream=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\_api_client.py", line 1224, in _request
+    return self._retry(self._request_once, http_request, stream)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 475, in __call__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 376, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 418, in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 185, in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 478, in __call__
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\_api_client.py", line 1201, in _request_once
+    errors.APIError.raise_for_response(response)
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\errors.py", line 121, in raise_for_response
+    cls.raise_error(response.status_code, response_json, response)
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\errors.py", line 146, in raise_error
+    raise ClientError(status_code, response_json, response)
+google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.778047507s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '59s'}]}}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\tests\test_integration.py", line 59, in test_02_gemini_flash_daily_content_generation
+    self.fail(f"Gemini 3 Flash API call failed: {e}")
+AssertionError: Gemini 3 Flash API call failed: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.778047507s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '59s'}]}}
+
+======================================================================
+FAIL: test_03_gemini_pro_weekly_content_generation (test_integration.TestGeminiAPIIntegration.test_03_gemini_pro_weekly_content_generation)
+Test actual content generation with Gemini 3 Pro model.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\tests\test_integration.py", line 68, in test_03_gemini_pro_weekly_content_generation
+    response = self.client.models.generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\models.py", line 5203, in generate_content
+    response = self._generate_content(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\models.py", line 3985, in _generate_content
+    response = self._api_client.request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\_api_client.py", line 1388, in request
+    response = self._request(http_request, http_options, stream=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\_api_client.py", line 1224, in _request
+    return self._retry(self._request_once, http_request, stream)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 475, in __call__
+    do = self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 376, in iter
+    result = action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 418, in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 185, in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\tenacity\__init__.py", line 478, in __call__
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\_api_client.py", line 1201, in _request_once
+    errors.APIError.raise_for_response(response)
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\errors.py", line 121, in raise_for_response
+    cls.raise_error(response.status_code, response_json, response)
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\site-packages\google\genai\errors.py", line 146, in raise_error
+    raise ClientError(status_code, response_json, response)
+google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3-pro\nPlease retry in 59.69427755s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', 'quotaId': 'GenerateContentInputTokensPerModelPerMinute-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', 'quotaId': 'GenerateContentInputTokensPerModelPerDay-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '59s'}]}}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\tests\test_integration.py", line 77, in test_03_gemini_pro_weekly_content_generation
+    self.fail(f"Gemini 3 Pro API call failed: {e}")
+Testing key starting with: AIzaSyA9iJ...
+
+Testing Gemini 3 Flash...
+Failed with gemini-3-flash-preview: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 2.110550174s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '2s'}]}}
+
+Testing Gemini 3 Pro...
+Failed with gemini-3-pro-preview: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3-pro\nPlease retry in 2.039724499s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', 'quotaId': 'GenerateContentInputTokensPerModelPerMinute-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-3-pro', 'location': 'global'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', 'quotaId': 'GenerateContentInputTokensPerModelPerDay-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '2s'}]}}
+
+Listing models with this key...
+Available: models/embedding-gecko-001
+Available: models/gemini-2.5-flash
+Available: models/gemini-2.5-pro
+Available: models/gemini-2.0-flash-exp
+Available: models/gemini-2.0-flash
+Available: models/gemini-2.0-flash-001
+Available: models/gemini-2.0-flash-exp-image-generation
+Available: models/gemini-2.0-flash-lite-001
+Available: models/gemini-2.0-flash-lite
+Available: models/gemini-2.0-flash-lite-preview-02-05
+Available: models/gemini-2.0-flash-lite-preview
+Available: models/gemini-exp-1206
+Available: models/gemini-2.5-flash-preview-tts
+Available: models/gemini-2.5-pro-preview-tts
+Available: models/gemma-3-1b-it
+Available: models/gemma-3-4b-it
+Available: models/gemma-3-12b-it
+Available: models/gemma-3-27b-it
+Available: models/gemma-3n-e4b-it
+Available: models/gemma-3n-e2b-it
+Available: models/gemini-flash-latest
+Available: models/gemini-flash-lite-latest
+Available: models/gemini-pro-latest
+Available: models/gemini-2.5-flash-lite
+Available: models/gemini-2.5-flash-image-preview
+Available: models/gemini-2.5-flash-image
+Available: models/gemini-2.5-flash-preview-09-2025
+Available: models/gemini-2.5-flash-lite-preview-09-2025
+Available: models/gemini-3-pro-preview
+Available: models/gemini-3-flash-preview
+Available: models/gemini-3-pro-image-preview
+Available: models/nano-banana-pro-preview
+Available: models/gemini-robotics-er-1.5-preview
+Available: models/gemini-2.5-computer-use-preview-10-2025
+Available: models/deep-research-pro-preview-12-2025
+Available: models/embedding-001
+Available: models/text-embedding-004
+Available: models/gemini-embedding-exp-03-07
+Available: models/gemini-embedding-exp
+Available: models/gemini-embedding-001
+Available: models/aqa
+Available: models/imagen-4.0-generate-preview-06-06
+Available: models/imagen-4.0-ultra-generate-preview-06-06
+Available: models/imagen-4.0-generate-001
+Available: models/imagen-4.0-ultra-generate-001
+Available: models/imagen-4.0-fast-generate-001
+Available: models/veo-2.0-generate-001
+Available: models/veo-3.0-generate-001
+Available: models/veo-3.0-fast-generate-001
+Available: models/veo-3.1-generate-preview
+Available: models/veo-3.1-fast-generate-preview
+Available: models/gemini-2.5-flash-native-audio-latest
+Available: models/gemini-2.5-flash-native-audio-preview-09-2025
+Available: models/gemini-2.5-flash-native-audio-preview-12-2025
+Γ£à Gemini API Key found: AIzaSyA9iJ...6Rx0
+
+≡ƒºá Testing Gemini 3 Flash (gemini-3-flash-preview) for daily content...
+
+≡ƒºá Testing Gemini 3 Pro (gemini-3-pro-preview) for weekly content...
+
+≡ƒöì Testing Google Trends RSS feed for geo=US...
+Γ£à WordPress config found
+
+≡ƒöî Testing WordPress REST API connection...
+Γ£à WordPress API connection successful!
+AssertionError: Gemini 3 Pro API call failed: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/usage?tab=rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3-pro\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-3-pro\nPlease retry in 59.69427755s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', 'quotaId': 'GenerateContentInputTokensPerModelPerMinute-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}, {'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', 'quotaId': 'GenerateContentInputTokensPerModelPerDay-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-3-pro'}}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '59s'}]}}
+
+======================================================================
+FAIL: test_generate_content_gemini_failure (test_main.TestContentGeneration.test_generate_content_gemini_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\ttapk\AppData\Local\Programs\Python\Python312\Lib\unittest\mock.py", line 1390, in patched
+    return func(*newargs, **newkeywargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ttapk\PycharmProjects\pythonProject\Auto-Blogging WP\tests\test_main.py", line 66, in test_generate_content_gemini_failure
+    self.assertIn('Failed', result['content'])
+AssertionError: 'Failed' not found in ''
+
+----------------------------------------------------------------------
+Ran 28 tests in 12.028s
+
+FAILED (failures=3, skipped=1)

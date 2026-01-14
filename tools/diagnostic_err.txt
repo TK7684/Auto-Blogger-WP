@@ -1,0 +1,15 @@
+2026-01-13 11:42:14,989 - INFO - \U0001f30d Selected Language: English
+2026-01-13 11:42:14,991 - INFO - \U0001f9e0 Generating optimized content for: Diagnostic Test (daily mode) in English...
+2026-01-13 11:42:15,967 - INFO - Using google-genai SDK with API key
+2026-01-13 11:42:15,967 - INFO -     ...calling Gemini API (Model: gemini-2.0-flash)...
+2026-01-13 11:42:15,972 - INFO - AFC is enabled with max remote calls: 10.
+2026-01-13 11:42:16,722 - INFO - HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent "HTTP/1.1 400 Bad Request"
+2026-01-13 11:42:20,726 - INFO -     ...calling Gemini API (Model: gemini-2.0-flash)...
+2026-01-13 11:42:20,728 - INFO - AFC is enabled with max remote calls: 10.
+2026-01-13 11:42:21,260 - INFO - HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent "HTTP/1.1 400 Bad Request"
+2026-01-13 11:42:25,262 - INFO -     ...calling Gemini API (Model: gemini-2.0-flash)...
+2026-01-13 11:42:25,262 - INFO - AFC is enabled with max remote calls: 10.
+2026-01-13 11:42:25,768 - INFO - HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent "HTTP/1.1 400 Bad Request"
+2026-01-13 11:42:25,769 - WARNING - \u26a0\ufe0f Primary model (gemini-2.0-flash) failed: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Unable to submit request because thinking_level is not supported by this model.. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini', 'status': 'INVALID_ARGUMENT'}}
+2026-01-13 11:42:25,769 - ERROR - \u274c Content generation failed (no fallback available).
+2026-01-13 11:42:25,769 - ERROR - \u274c Aborting: Content generation failed. Error: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Unable to submit request because thinking_level is not supported by this model.. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini', 'status': 'INVALID_ARGUMENT'}}

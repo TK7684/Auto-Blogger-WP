@@ -1,0 +1,7 @@
+.env
+*.log
+__pycache__/
+.pytest_cache/
+test_output.log
+*.json
+.envrc

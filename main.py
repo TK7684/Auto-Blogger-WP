@@ -2,7 +2,7 @@
 Auto-Blogging WordPress - Gemini 3 Optimized Version
 
 Automatically generates SEO-optimized blog posts based on trending topics.
-Optimized using the Gemini 3 Developer Guide with thinking levels and structured outputs.
+Optimized using the Gemini 3 Developer Guide with structured outputs.
 """
 
 import os
@@ -46,6 +46,11 @@ IMAGE_GENERATION_ENABLED = os.environ.get("IMAGE_GENERATION_ENABLED", "true").lo
 YOAST_INTEGRATION_ENABLED = os.environ.get("YOAST_INTEGRATION_ENABLED", "true").lower() == "true"
 SCHEMA_MARKUP_ENABLED = os.environ.get("SCHEMA_MARKUP_ENABLED", "true").lower() == "true"
 
+# Create a session for connection pooling (performance optimization)
+_session = requests.Session()
+_session.verify = True  # SSL verification enabled
+
+
 # --- STRUCTURED OUTPUT MODELS ---
 class SEOArticleMetadata(BaseModel):
     content: str = Field(description="The full HTML content of the article")
@@ -55,6 +60,7 @@ class SEOArticleMetadata(BaseModel):
     excerpt: str = Field(description="A short summary of the article")
     suggested_categories: List[str] = Field(description="List of relevant WordPress category names")
     suggested_tags: List[str] = Field(description="List of relevant WordPress tag names")
+
 
 # --- GENAI CLIENT ---
 _genai_client = None
@@ -125,14 +131,14 @@ def fetch_wordpress_terms(taxonomy: str = "categories") -> List[Dict]:
     """Fetch existing categories or tags from WordPress."""
     if not all([WP_URL, WP_USER, WP_APP_PASSWORD]):
         return []
-    
+
     url = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{taxonomy}"
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode()).decode('utf-8')
     headers = {"Authorization": f"Basic {token}"}
-    
+
     try:
-        response = requests.get(url, headers=headers, params={"per_page": 100}, timeout=20)
+        response = _session.get(url, headers=headers, params={"per_page": 100}, timeout=20)
         if response.status_code == 200:
             return response.json()
     except Exception as e:
@@ -143,7 +149,7 @@ def resolve_term_ids(suggested_names: List[str], taxonomy: str = "categories") -
     """Map term names to IDs. Creates tags if they don't exist."""
     existing_terms = fetch_wordpress_terms(taxonomy)
     name_to_id = {term['name'].lower(): term['id'] for term in existing_terms}
-    
+
     resolved_ids = []
     for name in suggested_names:
         name_lower = name.lower()
@@ -154,7 +160,7 @@ def resolve_term_ids(suggested_names: List[str], taxonomy: str = "categories") -
             new_id = create_wordpress_term(name, taxonomy)
             if new_id:
                 resolved_ids.append(new_id)
-                
+
     return resolved_ids
 
 def create_wordpress_term(name: str, taxonomy: str) -> Optional[int]:
@@ -167,7 +173,7 @@ def create_wordpress_term(name: str, taxonomy: str) -> Optional[int]:
         "Content-Type": "application/json"
     }
     try:
-        response = requests.post(url, headers=headers, json={"name": name}, timeout=20)
+        response = _session.post(url, headers=headers, json={"name": name}, timeout=20)
         if response.status_code == 201:
             return response.json().get('id')
     except Exception as e:
@@ -175,21 +181,19 @@ def create_wordpress_term(name: str, taxonomy: str) -> Optional[int]:
     return None
 
 # --- CONTENT GENERATION ---
-def generate_content_gemini(topic: str, context: str, mode: str = "daily") -> Dict:
+def generate_content_gemini(topic: str, context: str, mode: str = "daily") -> Optional[Dict]:
     """
-    Generate SEO-optimized content using Gemini 3 thinking models & structured outputs.
+    Generate SEO-optimized content using Gemini 3 with structured outputs.
     """
     logger.info(f"🧠 Generating optimized content for: {topic} ({mode} mode)...")
 
     client = get_genai_client()
     if not client:
-        return {'content': "AI Content Generation Failed.", 'seo_title': topic}
+        logger.error("Failed to get GenAI client")
+        return None
 
-    # Optimization: Use Gemini 3 models
-    model_name = "gemini-3-pro-preview" if mode == "weekly" else "gemini-3-flash-preview"
-    
-    # Optimization: Thinking Level
-    thinking_level = "high" if mode == "weekly" else "low"
+    # Optimization: Use appropriate model for mode
+    model_name = "gemini-2.0-flash-exp" if mode == "weekly" else "gemini-2.0-flash-exp"
 
     # Optimization: Use SEOPromptBuilder for detailed instructions
     if mode == "weekly":
@@ -204,7 +208,7 @@ def generate_content_gemini(topic: str, context: str, mode: str = "daily") -> Di
         config_dict = {
             "response_mime_type": "application/json",
             "response_json_schema": SEOArticleMetadata.model_json_schema(),
-            "temperature": 1.0  # Recommended for Gemini 3
+            "temperature": 1.0
         }
 
         response = client.models.generate_content(
@@ -213,22 +217,29 @@ def generate_content_gemini(topic: str, context: str, mode: str = "daily") -> Di
             config=config_dict
         )
 
-        # Parse JSON output directly into dict
+        # Parse JSON output
         import json
         result = json.loads(response.text)
+
+        # Validate the result has required fields
+        if not result.get('content'):
+            logger.error("Generated content missing 'content' field")
+            return None
+
         logger.info(f"✅ Content generated successfully")
         return result
 
     except Exception as e:
         logger.error(f"Error generating content: {e}")
-        return {'content': f"Failed: {e}", 'seo_title': topic}
+        return None
 
 # --- PUBLISHING ---
-def post_to_wp(title: str, content: str, seo_data: Dict, 
+def post_to_wp(title: str, content: str, seo_data: Dict,
                categories: List[int], tags: List[int],
                featured_image_id: Optional[int] = None) -> Optional[int]:
     """Publish to WordPress with full SEO, categories, and tags."""
     if not all([WP_URL, WP_USER, WP_APP_PASSWORD]):
+        logger.error("Missing WordPress credentials")
         return None
 
     url = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
@@ -238,6 +249,11 @@ def post_to_wp(title: str, content: str, seo_data: Dict,
         "Authorization": f"Basic {token}",
         "Content-Type": "application/json"
     }
+
+    # Validate required fields
+    if not content or content.startswith("Failed:"):
+        logger.error(f"Invalid content, not publishing: {content[:100]}")
+        return None
 
     data = {
         "title": seo_data.get('seo_title', title),
@@ -252,11 +268,11 @@ def post_to_wp(title: str, content: str, seo_data: Dict,
         data["featured_media"] = featured_image_id
 
     try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = _session.post(url, headers=headers, json=data, timeout=30)
         if response.status_code == 201:
             post_data = response.json()
             post_id = post_data.get('id')
-            
+
             # Yoast SEO Update
             if YOAST_INTEGRATION_ENABLED and yoast_integrator:
                 yoast_data = {
@@ -265,32 +281,38 @@ def post_to_wp(title: str, content: str, seo_data: Dict,
                     'meta_description': seo_data.get('meta_description', ''),
                 }
                 yoast_integrator.update_yoast_meta_fields(post_id, yoast_data)
-                
+
             return post_id
+        else:
+            logger.error(f"WordPress posting error: {response.status_code} - {response.text}")
     except Exception as e:
-        logger.error(f"WordPress posting error: {e}")
+        logger.error(f"WordPress posting exception: {e}")
     return None
 
 # --- MAIN EXECUTION ---
 def run_autoblogger(force_mode: Optional[str] = None, manual_topic: Optional[str] = None):
     """Main flow."""
     mode = force_mode or ("weekly" if datetime.datetime.today().weekday() == 6 else "daily")
-    
+
     if manual_topic:
         topic, context = manual_topic, "Manual"
     elif mode == "weekly":
         # Weekly optimization: Run research to find the best gap to cover
         logger.info("🕵️ Running Research Agent for weekly pillar content topic selection...")
-        agent = ResearchAgent(WP_URL, WP_USER, WP_APP_PASSWORD, GEMINI_API_KEY)
-        research = agent.run_research(days_back=7, num_ideas=3)
-        
-        if research.get('article_ideas'):
-            # Pick the top ranked idea
-            idea = research['article_ideas'][0]
-            topic = idea.title
-            context = f"Rationale: {idea.rationale}. Competitive Advantage: {idea.competitive_advantage}"
-            logger.info(f"🎯 Research-driven topic selected: {topic}")
-        else:
+        try:
+            agent = ResearchAgent(WP_URL, WP_USER, WP_APP_PASSWORD, GEMINI_API_KEY)
+            research = agent.run_research(days_back=7, num_ideas=3)
+
+            if research.get('article_ideas'):
+                # Pick the top ranked idea
+                idea = research['article_ideas'][0]
+                topic = idea.title
+                context = f"Rationale: {idea.rationale}. Competitive Advantage: {idea.competitive_advantage}"
+                logger.info(f"🎯 Research-driven topic selected: {topic}")
+            else:
+                topic, context = get_hot_trend()
+        except Exception as e:
+            logger.warning(f"Research agent failed: {e}, falling back to hot trends")
             topic, context = get_hot_trend()
     else:
         # Daily mode: use hot trends for speed
@@ -299,22 +321,30 @@ def run_autoblogger(force_mode: Optional[str] = None, manual_topic: Optional[str
     if not topic:
         logger.error("No topic found. Aborting.")
         return
-    
+
     # Generate content
     result = generate_content_gemini(topic, context, mode=mode)
-    
+
+    # Check if content generation was successful
+    if not result:
+        logger.error("Content generation failed, aborting")
+        return
+
     # Resolve WordPress terms
     cat_ids = resolve_term_ids(result.get('suggested_categories', []), "categories")
     tag_ids = resolve_term_ids(result.get('suggested_tags', []), "tags")
 
-    # Generate image (Grounded optimization in image_generator.py)
+    # Generate image
     featured_image_id = None
-    if IMAGE_GENERATION_ENABLED:
-        image_data = image_generator.generate_image(f"Featured image for: {topic}", mode=mode)
-        if image_data:
-            img_path = image_generator.save_image(image_data, f"post_{datetime.datetime.now().strftime('%Y%H%M%S')}.jpg")
-            if img_path:
-                featured_image_id = media_uploader.upload_media(img_path, topic, result.get('seo_title'))
+    if IMAGE_GENERATION_ENABLED and image_generator:
+        try:
+            image_data = image_generator.generate_image(f"Featured image for: {topic}", mode=mode)
+            if image_data and media_uploader:
+                img_path = image_generator.save_image(image_data, f"post_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.jpg")
+                if img_path:
+                    featured_image_id = media_uploader.upload_media(img_path, topic, result.get('seo_title'))
+        except Exception as e:
+            logger.warning(f"Image generation failed: {e}")
 
     # Add Schema
     post_url = f"{SITE_URL}/{topic.lower().replace(' ', '-')}"
@@ -330,6 +360,8 @@ def run_autoblogger(force_mode: Optional[str] = None, manual_topic: Optional[str
     post_id = post_to_wp(topic, final_content, result, cat_ids, tag_ids, featured_image_id)
     if post_id:
         logger.info(f"🚀 SUCCESS! Post {post_id} published.")
+    else:
+        logger.error("Failed to publish post")
 
 def add_schema_markup(content: str, title: str, description: str, fk: str, url: str) -> str:
     """Helper for schema."""

@@ -41,8 +41,7 @@ class ImageGenerator:
                     config=types.GenerateContentConfig(
                         tools=[{"google_search": {}}],
                         image_config=types.ImageConfig(
-                            aspect_ratio="16:9",
-                            image_size="4K"
+                            aspect_ratio="16:9"
                         )
                     )
                 )

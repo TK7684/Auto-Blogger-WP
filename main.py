@@ -201,21 +201,22 @@ def generate_content_gemini(topic: str, context: str, mode: str = "daily") -> Di
 
     try:
         # Optimization: Structured Outputs (Pydantic)
+        config_dict = {
+            "response_mime_type": "application/json",
+            "response_json_schema": SEOArticleMetadata.model_json_schema(),
+            "temperature": 1.0  # Recommended for Gemini 3
+        }
+
         response = client.models.generate_content(
             model=model_name,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
-                response_mime_type="application/json",
-                response_json_schema=SEOArticleMetadata.model_json_schema(),
-                temperature=1.0  # Recommended for Gemini 3
-            )
+            config=config_dict
         )
 
         # Parse JSON output directly into dict
         import json
         result = json.loads(response.text)
-        logger.info(f"✅ Content generated with thinking_level={thinking_level}")
+        logger.info(f"✅ Content generated successfully")
         return result
 
     except Exception as e:

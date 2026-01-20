@@ -35,14 +35,8 @@ class YoastSEOIntegrator:
 
     def update_yoast_meta_fields(self, post_id: int, seo_data: Dict) -> bool:
         """
-        Update Yoast SEO meta fields for a post.
-
-        Args:
-            post_id: WordPress post ID
-            seo_data: Dictionary containing SEO metadata
-
-        Returns:
-            True if successful, False otherwise
+        Update Yoast SEO meta fields for a post via standard WP Meta API.
+        This avoids 404 errors from the specific Yoast REST API if it's not fully enabled.
         """
         meta_fields = {
             "_yoast_wpseo_focuskw": seo_data.get('focus_keyword', ''),
@@ -56,26 +50,23 @@ class YoastSEOIntegrator:
             "_yoast_wpseo_content_score": str(seo_data.get('readability_score', 0)),
         }
 
-        # Remove empty values
-        meta_fields = {k: v for k, v in meta_fields.items() if v}
+        # Filter out empty strings if necessary, but usually better to send what we have
+        meta_payload = {k: v for k, v in meta_fields.items() if v}
 
         try:
-            # Update post meta fields
-            for meta_key, meta_value in meta_fields.items():
-                url = f"{self.api_base}/yoast/v1/posts/{post_id}"
-                headers = self.get_auth_headers()
-
-                payload = {
-                    "meta": {meta_key: meta_value}
-                }
-
-                response = requests.post(url, headers=headers, json=payload, timeout=30)
-
-                if response.status_code not in [200, 201]:
-                    logger.warning(f"Could not update {meta_key}: {response.status_code}")
-
-            logger.info(f"Yoast SEO meta fields updated for post {post_id}")
-            return True
+            url = f"{self.wp_url}/wp-json/wp/v2/posts/{post_id}"
+            headers = self.get_auth_headers()
+            
+            # Use the "meta" key in the post update payload
+            response = requests.post(url, headers=headers, json={"meta": meta_payload}, timeout=30)
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Yoast SEO meta fields updated for post {post_id}")
+                return True
+            else:
+                logger.warning(f"❌ Failed to update Yoast meta for post {post_id}: {response.status_code} - {response.text}")
+                # Fallback to individual updates if needed (though unlikely to help if 404)
+                return False
 
         except Exception as e:
             logger.error(f"Error updating Yoast meta fields: {e}")

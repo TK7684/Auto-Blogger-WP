@@ -4,34 +4,29 @@ on:
   schedule:
     # Runs at 02:00 UTC every Saturday
     - cron: '0 2 * * 6'
+  # Allows you to click a button in GitHub to run it manually
   workflow_dispatch:
     inputs:
       limit:
         description: 'Number of recent posts to audit'
         required: false
         default: '10'
-        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v2
         with:
           python-version: '3.10'
 
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-
-      - name: Create Service Account File
-        if: secrets.GEMINI_SERVICE_ACCOUNT_JSON != ''
-        run: |
-          echo "${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON }}" > service_account.json
 
       - name: Run Maintenance
         env:
@@ -43,14 +38,16 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SITE_URL: ${{ secrets.SITE_URL }}
           SITE_NAME: ${{ secrets.SITE_NAME }}
+          GEMINI_SERVICE_ACCOUNT_JSON: ${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON }}
         run: |
-          # Only set the file env var if it was created
-          if [ -f "service_account.json" ]; then
-            export GEMINI_SERVICE_ACCOUNT_KEY_FILE="service_account.json"
+          # Create service account file if secret is provided
+          if [ -n "$GEMINI_SERVICE_ACCOUNT_JSON" ]; then
+            echo "$GEMINI_SERVICE_ACCOUNT_JSON" > sa.json
+            export GEMINI_SERVICE_ACCOUNT_KEY_FILE="sa.json"
           fi
           
-          # Use the input limit if triggered manually, otherwise default to 10
-          LIMIT="${{ inputs.limit }}"
+          # Extract limit from input or use default
+          LIMIT="${{ github.event.inputs.limit }}"
           if [ -z "$LIMIT" ]; then LIMIT="10"; fi
           
           echo "🔧 Running maintenance with limit: $LIMIT"

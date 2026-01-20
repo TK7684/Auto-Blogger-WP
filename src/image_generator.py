@@ -60,13 +60,15 @@ class ImageGenerator:
         return self.generate_image_dalle(prompt)
 
     def generate_image_huggingface(self, prompt: str) -> Optional[bytes]:
-        api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+        api_url = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
         headers = {"Authorization": f"Bearer {self.hf_token}"}
         try:
             response = self.session.post(api_url, headers=headers, json={"inputs": prompt}, timeout=60)
             if response.status_code == 200:
                 logger.info("✅ Image generated via Hugging Face")
                 return response.content
+            else:
+                logger.warning(f"HF Failed: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"HF Exception: {e}")
         return None
@@ -75,10 +77,16 @@ class ImageGenerator:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key: return None
         try:
-            import openai
-            openai.api_key = api_key
-            logger.info("Generating with DALL-E...")
-            response = openai.Image.create(prompt=prompt, n=1, size="1024x1024", response_format="b64_json")
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            logger.info("Generating with DALL-E 3...")
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                n=1,
+                size="1024x1024",
+                response_format="b64_json"
+            )
             return base64.b64decode(response.data[0].b64_json)
         except Exception as e:
             logger.error(f"DALL-E failed: {e}")

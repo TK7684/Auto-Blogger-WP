@@ -29,6 +29,15 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Validate Secrets
+        run: |
+          echo "Checking required secrets..."
+          if [ -z "${{ secrets.WP_URL }}" ]; then echo "❌ WP_URL is missing"; fi
+          if [ -z "${{ secrets.WP_USER }}" ]; then echo "❌ WP_USER is missing"; fi
+          if [ -z "${{ secrets.WP_APP_PASSWORD }}" ]; then echo "❌ WP_APP_PASSWORD is missing"; fi
+          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then echo "❌ GEMINI_API_KEY is missing"; fi
+          if [ -z "${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON }}" ]; then echo "⚠️ GEMINI_SERVICE_ACCOUNT_JSON is missing (optional)"; fi
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt

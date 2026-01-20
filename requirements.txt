@@ -10,7 +10,7 @@ pydantic>=2.0.0
 pytest>=8.0.0
 
 # Twitter/X API for trending topics
-tweepy>=5.0.0
+tweepy>=4.14.0
 
 # News API (fallback for trending topics)
 newsapi-python>=0.2.7

@@ -142,7 +142,7 @@ class TrendAnalyzer:
         prompt = f"Analyze gaps between competitors and our site. Competitors: " + ", ".join([a.title for a in comp[:20]])
         try:
             resp = self.client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-2.0-flash-exp",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     thinking_config=types.ThinkingConfig(thinking_level="low"),
@@ -166,7 +166,7 @@ class ArticleIdeationEngine:
         prompt = f"Generate {num_ideas} article ideas based on these gaps: " + str(gaps)
         try:
             resp = self.client.models.generate_content(
-                model="gemini-3-pro-preview",
+                model="gemini-2.5-pro",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     thinking_config=types.ThinkingConfig(thinking_level="high"),

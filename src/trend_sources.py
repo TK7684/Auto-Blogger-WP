@@ -1,13 +1,15 @@
 """
 Trend Sources Module - Fetches trending topics from multiple sources.
-Standardized version.
+Standardized version with Multi-language support.
 """
 
 import os
 import logging
 import requests
 import random
-from typing import Tuple, Optional
+import json
+from typing import Tuple, Optional, Dict, List
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +53,27 @@ class NewsAPIFetcher:
         return None
 
 class PromotionalFetcher:
-    def __init__(self, json_file: str = "promotional_topics.json"):
+    def __init__(self, json_file: str = "src/topics.json"):
         self.json_file = json_file
+        # Fallback to root if src not found (handling different execution contexts)
+        if not os.path.exists(self.json_file) and os.path.exists("topics.json"):
+             self.json_file = "topics.json"
         
-    def get_trending_topic(self) -> Optional[Tuple[str, str]]:
-        import json
+    def get_trending_topic(self, target_lang: str = "en") -> Optional[Tuple[str, str]]:
         try:
             if os.path.exists(self.json_file):
                 with open(self.json_file, 'r', encoding='utf-8') as f:
-                    topics = json.load(f)
-                    if topics:
-                        choice = random.choice(topics)
+                    data = json.load(f)
+                    
+                    # Find topics for target language
+                    lang_group = next((item for item in data if item["language"] == target_lang), None)
+                    
+                    # Fallback to English if target not found
+                    if not lang_group:
+                        lang_group = next((item for item in data if item["language"] == "en"), None)
+                    
+                    if lang_group and lang_group.get("topics"):
+                        choice = random.choice(lang_group["topics"])
                         return choice['topic'], choice['context']
         except Exception as e: logger.error(f"Promotional error: {e}")
         return None
@@ -72,31 +84,48 @@ class TrendAggregator:
         self.newsapi_fetcher = NewsAPIFetcher()
         self.promo_fetcher = PromotionalFetcher()
 
-    def get_trending_topic(self) -> Tuple[Optional[str], Optional[str]]:
+    def get_trending_topic(self) -> Tuple[Optional[str], Optional[str], str]:
+        """
+        Returns: (Topic, Context, Language)
+        """
         logger.info("Fetching trending topic...")
         
-        # 20% chance for promotional
-        if random.random() < 0.20:
-            result = self.promo_fetcher.get_trending_topic()
-            if result: return result
+        # Randomly select language (50% Chance Thai vs English if you want mix)
+        # Or bias towards one. Let's do 50/50 for now.
+        target_gen_lang = "th" if random.random() < 0.5 else "en"
+        logger.info(f"Targeting Language: {target_gen_lang}")
+        
+        # 40% chance for promotional (K9 topics) - increased from 20%
+        if random.random() < 0.40:
+            result = self.promo_fetcher.get_trending_topic(target_gen_lang)
+            if result: 
+                return result[0], result[1], target_gen_lang
 
-        # Priority: Twitter -> NewsAPI -> Promotional Fallback -> Evergreen
-        for fetcher in [self.twitter_fetcher, self.newsapi_fetcher, self.promo_fetcher]:
-            result = fetcher.get_trending_topic()
-            if result: return result
+        # If English, we can try Twitter/NewsAPI (which are mostly English/Global)
+        if target_gen_lang == "en":
+            for fetcher in [self.twitter_fetcher, self.newsapi_fetcher]:
+                result = fetcher.get_trending_topic()
+                if result: return result[0], result[1], "en"
+        
+        # Fallback to promotional if external sources fail even if en
+        result = self.promo_fetcher.get_trending_topic(target_gen_lang)
+        if result: return result[0], result[1], target_gen_lang
 
+        # Ultimate fallback
         evergreen = [
             ("The Future of AI in 2026", "How generative models are reshaping industries."),
             ("Sustainable Travel Tips", "How to explore the world with minimal impact.")
         ]
-        return random.choice(evergreen)
+        topic, ctx = random.choice(evergreen)
+        return topic, ctx, "en"
 
 # Singleton instance
 _trend_aggregator = None
 
-def get_hot_trend() -> Tuple[Optional[str], Optional[str]]:
+def get_hot_trend() -> Tuple[Optional[str], Optional[str], str]:
     """
     Convenience function to get trending topic.
+    Returns: (Topic, Context, Language)
     """
     global _trend_aggregator
     if _trend_aggregator is None:
@@ -104,5 +133,5 @@ def get_hot_trend() -> Tuple[Optional[str], Optional[str]]:
     return _trend_aggregator.get_trending_topic()
 
 if __name__ == "__main__":
-    t, d = get_hot_trend()
-    print(f"Trend: {t}")
+    t, d, l = get_hot_trend()
+    print(f"Trend: {t} [{l}]")

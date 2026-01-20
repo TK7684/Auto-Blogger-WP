@@ -17,7 +17,7 @@ import os
 import tempfile
 
 # Import classes from research_agent
-from research_agent import (
+from src.research_agent import (
     Article,
     ContentGap,
     ArticleIdea,
@@ -28,6 +28,8 @@ from research_agent import (
     ResearchAgent,
     create_default_sources_file
 )
+from src.clients.wordpress import WordPressClient
+from src.clients.gemini import GeminiClient
 
 
 class TestArticleDataclass(unittest.TestCase):

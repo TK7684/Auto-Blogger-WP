@@ -9,26 +9,26 @@ print(f"Testing key starting with: {api_key[:10]}...")
 client = genai.Client(api_key=api_key)
 
 try:
-    # Test Gemini 3 Flash (fast)
-    print("\nTesting Gemini 3 Flash...")
+    # Test Gemini 2.0 Flash (fast)
+    print("\nTesting Gemini 2.0 Flash...")
     response = client.models.generate_content(
-        model="gemini-3-flash-preview",
+        model="gemini-2.0-flash-exp",
         contents="Say hello"
     )
     print(f"Success! Response: {response.text}")
 except Exception as e:
-    print(f"Failed with gemini-3-flash-preview: {e}")
+    print(f"Failed with gemini-2.0-flash-exp: {e}")
 
 try:
-    # Test Gemini 3 Pro (deep reasoning)
-    print("\nTesting Gemini 3 Pro...")
+    # Test Gemini 2.5 Pro (deep reasoning)
+    print("\nTesting Gemini 2.5 Pro...")
     response = client.models.generate_content(
-        model="gemini-3-pro-preview",
+        model="gemini-2.5-pro",
         contents="Say hello"
     )
     print(f"Success! Response: {response.text}")
 except Exception as e:
-    print(f"Failed with gemini-3-pro-preview: {e}")
+    print(f"Failed with gemini-2.5-pro: {e}")
 
 try:
     print("\nListing models with this key...")

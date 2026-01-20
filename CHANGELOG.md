@@ -1,27 +1,18 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.1.0] - 2026-01-06
+## [1.3.0] - 2026-01-20
 
 ### Added
-- **Gemini 3 Migration**: Fully migrated to `google-genai` SDK (v1.0.0).
-- **Research Agent**: New autonomous research module for competitor analysis and content gap detection.
-- **Thinking Levels**: Integration of Gemini 3 `thinking_level` parameter (high for weekly, low for daily).
-- **Structured Outputs**: Implemented Pydantic models for reliable JSON response parsing.
-- **Evergreen Fallbacks**: Robust fallback topics when trend sources are unavailable.
-- **Image Generation Enhancements**: Added support for Hugging Face API and Gemini 3 Pro Grounded generation.
-- **Unit Testing Suite**: Comprehensive unit tests for `main.py`, `research_agent.py`, and integration tests.
+- **Multi-language Support**: Auto-blogging now supports both English and Thai topics.
+- **Maintenance Mode**: New `maintenance` command to audit and fix past posts (add images, fix SEO, clean links).
+- **Topics Configuration**: `src/topics.json` for managing topics across languages.
+- **Centralized Logic**: Consolidated all core components into `src/` directory.
 
 ### Changed
-- **Optimized Content Generation**: Improved prompts using `SEOPromptBuilder` and structured metadata.
-- **Refactored WordPress Integration**: Added support for multiple categories/tags and identity-based term resolution.
-- **Performance**: Integrated `requests.Session` for improved network efficiency.
+- **Architecture**: Refactored `main.py`, `trend_sources.py`, and `image_generator.py` to use a centralized module structure.
+- **Image Generation**: Updated to use the unified `GeminiClient` for better stability and authentication handling.
+- **Link Handling**: Auditor now automatically resolves `[INSERT_INTERNAL_LINK:...]` placeholders and fixes raw external URLs.
 
 ### Fixed
-- Fixed RSS date parsing bugs in `research_agent.py`.
-- Resolved JSON parsing errors for markdown-wrapped AI responses.
-- Cleaned up redundant log files and junk scripts from codebase.
+- **Gemini Client**: Resolved initialization issues where image generator would fail without proper client context.
+- **Legacy Files**: Cleaned up obsolete root-level scripts.

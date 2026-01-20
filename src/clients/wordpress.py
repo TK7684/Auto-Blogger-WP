@@ -40,6 +40,17 @@ class WordPressClient:
         except Exception as e:
             logger.error(f"Error fetching posts: {e}")
         return []
+        
+    def get_post(self, post_id: int) -> Optional[Dict]:
+        if not self.wp_url: return None
+        url = f"{self.wp_url}/wp-json/wp/v2/posts/{post_id}"
+        try:
+            response = self.session.get(url, headers=self.headers, params={"context": "edit"}, timeout=20)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching post {post_id}: {e}")
+        return None
 
     def fetch_terms(self, taxonomy: str = "categories", params: Dict = None) -> List[Dict]:
         if not self.wp_url: return []

@@ -6,11 +6,9 @@ Updated for google-genai and Gemini 3.
 import os
 import sys
 import io
-import unittest
-import base64
-import requests
-import feedparser
-from google import genai
+from src.main import initialize_system, run_content_generation
+from src.clients.wordpress import WordPressClient
+from src.clients.gemini import GeminiClient
 from dotenv import load_dotenv
 
 # Fix Windows console encoding
@@ -41,14 +39,14 @@ class TestGeminiAPIIntegration(unittest.TestCase):
         print(f"✅ Gemini API Key found: {self.api_key[:10]}...{self.api_key[-4:]}")
 
     def test_02_gemini_flash_daily_content_generation(self):
-        """Test actual content generation with Gemini 3 Flash model."""
+        """Test actual content generation with Gemini 2.0 Flash model."""
         if not self.api_key:
             self.skipTest("GEMINI_API_KEY not configured")
 
-        print("\n🧠 Testing Gemini 3 Flash (gemini-3-flash-preview) for daily content...")
+        print("\n🧠 Testing Gemini 2.0 Flash (gemini-2.0-flash-exp) for daily content...")
         try:
             response = self.client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-2.0-flash-exp",
                 contents="Write a short 100-word test article about artificial intelligence."
             )
 
@@ -59,14 +57,14 @@ class TestGeminiAPIIntegration(unittest.TestCase):
             self.fail(f"Gemini 3 Flash API call failed: {e}")
 
     def test_03_gemini_pro_weekly_content_generation(self):
-        """Test actual content generation with Gemini 3 Pro model."""
+        """Test actual content generation with Gemini 2.5 Pro model."""
         if not self.api_key:
             self.skipTest("GEMINI_API_KEY not configured")
 
-        print("\n🧠 Testing Gemini 3 Pro (gemini-3-pro-preview) for weekly content...")
+        print("\n🧠 Testing Gemini 2.5 Pro (gemini-2.5-pro) for weekly content...")
         try:
             response = self.client.models.generate_content(
-                model="gemini-3-pro-preview",
+                model="gemini-2.5-pro",
                 contents="Write a short 150-word deep dive about quantum computing."
             )
 

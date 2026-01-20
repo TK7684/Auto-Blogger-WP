@@ -1,6 +1,12 @@
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 import logging
+
+# Add project root to Python path for module imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 # Set up logging for the test
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

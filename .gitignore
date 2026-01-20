@@ -5,3 +5,10 @@ __pycache__/
 test_output.log
 *.json
 .envrc
+
+# Debug files
+tools/env_check.txt
+debug_output.txt
+debug_output_*.txt
+fix_log*.txt
+generated_images/

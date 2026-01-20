@@ -11,16 +11,21 @@ on:
         description: 'Number of recent posts to audit'
         required: false
         default: '10'
+        type: string
 
 jobs:
-  build:
+  maintenance_audit:
+    name: Run Maintenance Audit
     runs-on: ubuntu-latest
     steps:
+      - name: Debug Trigger
+        run: echo "Manual trigger received. Limit input is ${{ github.event.inputs.limit }}"
+
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
@@ -46,9 +51,9 @@ jobs:
             export GEMINI_SERVICE_ACCOUNT_KEY_FILE="sa.json"
           fi
           
-          # Extract limit from input or use default
-          LIMIT="${{ github.event.inputs.limit }}"
-          if [ -z "$LIMIT" ]; then LIMIT="10"; fi
+          # Extract limit from input or use default from GHA context
+          USER_LIMIT="${{ github.event.inputs.limit }}"
+          LIMIT="${USER_LIMIT:-10}"
           
           echo "🔧 Running maintenance with limit: $LIMIT"
           python main.py maintenance $LIMIT

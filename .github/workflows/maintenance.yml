@@ -1,0 +1,49 @@
+name: Maintenance Auditor
+
+on:
+  schedule:
+    # Runs at 02:00 UTC every Saturday
+    - cron: '0 2 * * 6'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of recent posts to audit'
+        required: false
+        default: '10'
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Create Service Account File
+        if: "${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON != '' }}"
+        run: |
+          echo "${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON }}" > auto-blogger-wp-d3bb9b87c50a.json
+
+      - name: Run Maintenance
+        env:
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_SERVICE_ACCOUNT_KEY_FILE: auto-blogger-wp-d3bb9b87c50a.json
+          SITE_URL: ${{ secrets.SITE_URL }}
+          SITE_NAME: ${{ secrets.SITE_NAME }}
+        run: |
+          # Use the input limit if triggered manually, otherwise default to 10
+          LIMIT="${{ github.event.inputs.limit || '10' }}"
+          python main.py maintenance $LIMIT

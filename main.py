@@ -17,7 +17,8 @@ if __name__ == "__main__":
             command = sys.argv[1]
             
             if command == "maintenance":
-                run_maintenance(system)
+                limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+                run_maintenance(system, limit=limit)
             elif command == "weekly":
                 run_content_generation(system, mode="weekly")
             elif command == "daily":

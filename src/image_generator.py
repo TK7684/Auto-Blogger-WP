@@ -23,14 +23,42 @@ class ImageGenerator:
         self.session = requests.Session()
 
     def generate_image(self, prompt: str, mode: str = "daily") -> Optional[bytes]:
-        """Priority: DALL-E 3 -> Hugging Face (with enhancers) -> Gemini 3 (Disabled)."""
+        """Priority: Gemini 3 ("Nano Banana") -> DALL-E 3 -> Hugging Face."""
         
-        # 1. Try DALL-E 3 (Highest Quality)
+        # 1. Try Gemini 3 Pro Image (User Requested Primary)
+        if self.gemini_client and self.gemini_client.client:
+             model_name = "gemini-3-pro-image-preview" 
+             try:
+                logger.info(f"📸 Attempting Gemini 3 ('Nano Banana') Image generation with {model_name}...")
+                response = self.gemini_client.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=['TEXT', 'IMAGE'],
+                        image_config=types.ImageConfig(
+                            aspect_ratio="16:9",
+                            image_size="1K"
+                        )
+                    )
+                )
+                if response.parts:
+                    for part in response.parts:
+                        if part.inline_data:
+                            logger.info(f"✅ Image generated via {model_name}")
+                            return part.inline_data.data
+            except Exception as e:
+                msg = str(e)
+                if "RESOURCE_EXHAUSTED" in msg:
+                    logger.warning(f"Gemini 3 Quota Exhausted (Falling back): {msg[:100]}")
+                else:
+                    logger.warning(f"Gemini 3 failed: {e}")
+
+        # 2. Try DALL-E 3 (High Quality Fallback)
         dalle_image = self.generate_image_dalle(prompt)
         if dalle_image:
             return dalle_image
 
-        # 2. Try Hugging Face (Fallback with enhanced prompt)
+        # 3. Try Hugging Face (Last Resort)
         if self.hf_token:
             try:
                 # Enhance prompt for better quality
@@ -39,11 +67,8 @@ class ImageGenerator:
                 return self.generate_image_huggingface(enhanced_prompt)
             except Exception as e:
                 logger.warning(f"Hugging Face failed: {e}")
-
-        # 3. Try Gemini 3 Pro Image (Temporarily Disabled / Last Resort)
-        # if self.gemini_client and self.gemini_client.client:
-        if False: # Disabled due to 404s
-            pass
+        
+        return None
 
     def generate_image_huggingface(self, prompt: str) -> Optional[bytes]:
         api_url = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"

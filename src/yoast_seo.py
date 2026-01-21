@@ -50,8 +50,14 @@ class YoastSEOIntegrator:
             "_yoast_wpseo_content_score": str(seo_data.get('readability_score', 0)),
         }
 
-        # Filter out empty strings if necessary, but usually better to send what we have
-        meta_payload = {k: v for k, v in meta_fields.items() if v}
+        # Try both with and without leading underscore to handle different API configurations
+        meta_payload = {}
+        for k, v in meta_fields.items():
+            if v:
+                meta_payload[k] = v
+                # Add alias without leading underscore (e.g., yoast_wpseo_focuskw)
+                if k.startswith('_yoast'):
+                    meta_payload[k[1:]] = v
 
         try:
             url = f"{self.wp_url}/wp-json/wp/v2/posts/{post_id}"

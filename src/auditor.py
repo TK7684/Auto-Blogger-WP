@@ -90,11 +90,16 @@ class ContentAuditor:
         """Helper to get source URL for connection."""
         try:
              # This is a raw call, ideally we'd add to WPClient, but local helper is fine
-             resp = self.wp_client.session.get(f"{self.wp_client.api_url}/media/{media_id}")
+             url = f"{self.wp_client.api_url}/media/{media_id}"
+             resp = self.wp_client.session.get(url)
              if resp.status_code == 200:
-                 return resp.json().get("source_url", "")
-        except:
-            pass
+                 source_url = resp.json().get("source_url", "")
+                 if source_url:
+                     logger.info(f"🔗 Retrieved media URL: {source_url}")
+                     return source_url
+             logger.warning(f"Failed to fetch media URL for {media_id}: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Media fetch exception: {e}")
         return ""
 
     def check_and_fix_image(self, post_id: int, post_title: str, featured_media: int) -> Optional[int]:
@@ -140,6 +145,7 @@ class ContentAuditor:
            - Write a compelling **Meta Description** (max 160 chars, include keyword).
            - **Rewrite the First Paragraph**: Ensure the Focus Keyword appears naturally in the first 2 sentences.
            - Ensure H2/H3 hierarchy is perfect.
+           - **IMPORTANT**: PRESERVE ALL `<img ...>` TAGS exactly as they are. DO NOT remove or modify them.
         
         2. **Link & Format Fixing**: 
            - Convert raw URLs to HTML links.

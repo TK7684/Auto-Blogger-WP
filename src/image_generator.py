@@ -26,7 +26,9 @@ class ImageGenerator:
         """Priority: Gemini 3 Pro Image -> Hugging Face -> DALL-E."""
         
         # 1. Try Gemini 3 Pro Image (and fallbacks)
-        if self.gemini_client and self.gemini_client.client:
+        # TEMPORARILY DISABLED due to 404 errors on v1beta endpoint. Using HF fallback.
+        # if self.gemini_client and self.gemini_client.client:
+        if False: # Disabled for stability
             models_to_try = ["imagen-3.0-generate-001"]
             
             for model_name in models_to_try:

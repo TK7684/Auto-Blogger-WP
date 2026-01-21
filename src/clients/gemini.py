@@ -68,7 +68,7 @@ class GeminiClient:
     def generate_structured_output(self, model: str, prompt: str, schema: Dict, tools: Optional[list] = None) -> Optional[Any]:
         """Generate content expected to match a specific JSON schema."""
         config = types.GenerateContentConfig(
-            tools=tools or [{"google_search": {}}],
+            tools=tools,
             response_mime_type="application/json",
             response_json_schema=schema,
             temperature=1.0

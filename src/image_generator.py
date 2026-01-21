@@ -27,7 +27,7 @@ class ImageGenerator:
         
         # 1. Try Gemini 3 Pro Image (and fallbacks)
         if self.gemini_client and self.gemini_client.client:
-            models_to_try = ["imagen-3.0-generate-001", "imagen-3.0-fast-generate-001", "imagegeneration@006"]
+            models_to_try = ["imagen-3.0-generate-001"]
             
             for model_name in models_to_try:
                 try:

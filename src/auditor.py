@@ -90,7 +90,7 @@ class ContentAuditor:
         """Helper to get source URL for connection."""
         try:
              # This is a raw call, ideally we'd add to WPClient, but local helper is fine
-             url = f"{self.wp_client.api_url}/media/{media_id}"
+             url = f"{self.wp_client.wp_url}/wp-json/wp/v2/media/{media_id}"
              resp = self.wp_client.session.get(url)
              if resp.status_code == 200:
                  source_url = resp.json().get("source_url", "")

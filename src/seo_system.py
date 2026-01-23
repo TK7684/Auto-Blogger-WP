@@ -122,8 +122,7 @@ BODY (3-4 H2 sections):
 - H2s must be benefit-driven (e.g., "How to Save Money" vs "Saving Money").
 - Paragraphs must be SHORT (1-2 sentences).
 - Use distinct formatting (bolding, italics, lists) to keep the eye moving.
-- Include internal link placeholders: [INSERT_INTERNAL_LINK:{focus_keyword}]
-- Include external link suggestions: [SUGGEST_EXTERNAL_LINK:authoritative_source]
+- Include internal link placeholders: [INSERT_INTERNAL_LINK:relevant_topic] where relevant_topics should match existing content on your site.
 
 SEO ELEMENTS:
 - Keyword density: 1-2% (natural placement).
@@ -294,8 +293,7 @@ SECTION 6: FAQs (Verified)
 SEO ELEMENTS:
 - **Keyword Density**: 1.5-2.5% (use "{focus_keyword}" naturally 15-20 times).
 - **Subheadings**: Include "{focus_keyword}" in at least 50% of H2/H3s.
-- **Internal Links**: [INSERT_INTERNAL_LINK:topic] (Use generic topics like 'AI', 'Tech', 'Business').
-- **External Links**: [SUGGEST_EXTERNAL_LINK:url] (Suggest authoritative High-DA links. DO NOT use 'nofollow'. We need link juice.).
+- **Internal Links**: [INSERT_INTERNAL_LINK:relevant_topic] where relevant_topic should match existing content on your site (e.g., 'AI', 'Tech', 'Business').
 - **Images**: Include at least 3 placeholders (e.g., `[IMAGE_PLACEHOLDER_0]`).
     - **Alt Text**: Suggest optimized Alt Text for each image containing "{focus_keyword}".
 

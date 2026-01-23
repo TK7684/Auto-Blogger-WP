@@ -20,6 +20,7 @@ from src.auditor import ContentAuditor
 from src.clients.gemini import GeminiClient
 from src.clients.wordpress import WordPressClient
 from src.yoast_seo import YoastSEOIntegrator
+from src.utils.linking import resolve_internal_links
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -151,9 +152,15 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
     cat_id = 1 # Default Uncategorized
     # (Optional: Add logic to resolve/create categories based on meta.suggested_categories)
 
+    # Resolve internal links and clean up placeholders
+    existing_posts = wp.get_existing_links(limit=100)
+    final_content = resolve_internal_links(meta.content, existing_posts)
+    # Remove any remaining SUGGEST_EXTERNAL_LINK placeholders (external links should be manually curated)
+    import re
+    final_content = re.sub(r'\[SUGGEST_EXTERNAL_LINK:[^\]]+\]', '', final_content)
+
     # Schema
     post_url = f"{SITE_URL}/{topic.lower().replace(' ', '-')}"
-    final_content = meta.content
     schema_markup = schema.generate_article_schema(meta.seo_title, meta.meta_description, final_content, post_url)
     final_content += f"\n\n<script type='application/ld+json'>{json.dumps(schema_markup)}</script>"
 

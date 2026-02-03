@@ -365,14 +365,14 @@ class ImageGenerator:
         self.session = requests.Session()
 
     def generate_image(self, prompt: str, mode: str = "daily") -> Optional[bytes]:
-        """Priority: Hugging Face FLUX.1 -> DALL-E 3 -> Gemini 3 Pro Image Preview."""
+        """Priority: Hugging Face SD 3.5 Large -> DALL-E 3 -> Gemini 3 Pro Image Preview."""
 
-        # 1. Try Hugging Face FLUX.1-dev FIRST (Primary)
+        # 1. Try Hugging Face Stable Diffusion 3.5 Large (Primary)
         if self.hf_token:
             try:
                 # Enhance prompt for better quality
                 enhanced_prompt = f"{prompt}, photorealistic, 8k, high fidelity, highly detailed, professional photography, cinematic lighting"
-                logger.info(f"📸 Attempting Hugging Face FLUX.1 generation (Primary)...")
+                logger.info(f"📸 Attempting Hugging Face SD 3.5 Large generation (Primary)...")
                 hf_image = self.generate_image_huggingface(enhanced_prompt)
                 if hf_image:
                     return hf_image
@@ -380,7 +380,9 @@ class ImageGenerator:
                 logger.warning(f"Hugging Face failed: {e}")
 
         # 2. Try DALL-E 3 (Fallback)
-        dalle_image = self.generate_image_dalle(prompt)
+        # Sanitize prompt for DALL-E 3 safety
+        safe_prompt = prompt[:900] # Ensure not too long
+        dalle_image = self.generate_image_dalle(safe_prompt)
         if dalle_image:
             return dalle_image
 
@@ -434,7 +436,8 @@ class ImageGenerator:
         return None
 
     def generate_image_huggingface(self, prompt: str) -> Optional[bytes]:
-        api_url = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-dev"
+        # Use Stable Diffusion 3.5 Large
+        api_url = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-3.5-large"
         headers = {"Authorization": f"Bearer {self.hf_token}"}
 
         def _try_hf():
@@ -469,20 +472,25 @@ class ImageGenerator:
         client = OpenAI(api_key=api_key)
 
         def _try_dalle():
-            logger.info("Generating with DALL-E 3...")
-            response = client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                n=1,
-                size="1024x1024",
-                response_format="b64_json"
-            )
-            return base64.b64decode(response.data[0].b64_json)
+            logger.info(f"Generating with DALL-E 3... Prompt: {prompt[:50]}...")
+            try:
+                response = client.images.generate(
+                    model="dall-e-3",
+                    prompt=prompt,
+                    n=1,
+                    size="1024x1024",
+                    quality="standard", # Explicitly set quality
+                    response_format="b64_json"
+                )
+                return base64.b64decode(response.data[0].b64_json)
+            except Exception as e:
+                 logger.error(f"DALL-E 3 Error: {e}")
+                 raise e
 
         return call_with_smart_retry(
             _try_dalle,
             service_name="DALL-E 3",
-            max_retries=8,
+            max_retries=3, # Reduce retries for non-transient errors
             base_delay=1.0,
             max_delay=120.0
         )

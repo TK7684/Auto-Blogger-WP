@@ -6,15 +6,17 @@ Updated for google-genai and Gemini 3.
 import os
 import sys
 import io
+import unittest
+import base64
+import requests
+import feedparser
+from google import genai
 from src.main import initialize_system, run_content_generation
 from src.clients.wordpress import WordPressClient
 from src.clients.gemini import GeminiClient
 from dotenv import load_dotenv
 
-# Fix Windows console encoding
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+# Note: Removed Windows console encoding wrapper to fix pytest capture conflict
 
 # Load environment variables
 load_dotenv()
@@ -43,10 +45,10 @@ class TestGeminiAPIIntegration(unittest.TestCase):
         if not self.api_key:
             self.skipTest("GEMINI_API_KEY not configured")
 
-        print("\n🧠 Testing Gemini 2.0 Flash (gemini-2.0-flash-exp) for daily content...")
+        print("\n🧠 Testing Gemini 2.0 Flash for daily content...")
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash-exp",
+                model="gemini-2.0-flash",
                 contents="Write a short 100-word test article about artificial intelligence."
             )
 
@@ -54,14 +56,16 @@ class TestGeminiAPIIntegration(unittest.TestCase):
             self.assertGreater(len(response.text), 50, "Generated content should be meaningful")
             print(f"✅ Flash generated {len(response.text)} characters")
         except Exception as e:
-            self.fail(f"Gemini 3 Flash API call failed: {e}")
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                self.skipTest(f"Rate limit exceeded: {e}")
+            self.fail(f"Gemini Flash API call failed: {e}")
 
     def test_03_gemini_pro_weekly_content_generation(self):
         """Test actual content generation with Gemini 2.5 Pro model."""
         if not self.api_key:
             self.skipTest("GEMINI_API_KEY not configured")
 
-        print("\n🧠 Testing Gemini 2.5 Pro (gemini-2.5-pro) for weekly content...")
+        print("\n🧠 Testing Gemini 2.5 Pro for weekly content...")
         try:
             response = self.client.models.generate_content(
                 model="gemini-2.5-pro",
@@ -72,7 +76,9 @@ class TestGeminiAPIIntegration(unittest.TestCase):
             self.assertGreater(len(response.text), 100, "Generated content should be meaningful")
             print(f"✅ Pro generated {len(response.text)} characters")
         except Exception as e:
-            self.fail(f"Gemini 3 Pro API call failed: {e}")
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                self.skipTest(f"Rate limit exceeded: {e}")
+            self.fail(f"Gemini Pro API call failed: {e}")
 
 
 class TestWordPressAPIIntegration(unittest.TestCase):

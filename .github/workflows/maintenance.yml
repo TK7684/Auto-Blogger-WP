@@ -1,68 +1,38 @@
-name: Maintenance Auditor
+name: Daily Maintenance
 
 on:
   schedule:
-    # Runs at 02:00 UTC every Saturday
-    - cron: '0 2 * * 6'
-  # Allows you to click a button in GitHub to run it manually
+    # 3:00 PM Thailand/Vietnam (UTC+7) = 08:00 UTC
+    - cron: '0 8 * * *'
   workflow_dispatch:
-    inputs:
-      limit:
-        description: 'Number of recent posts to audit'
-        required: false
-        default: '10'
-        type: string
 
 jobs:
-  maintenance_audit:
-    name: Run Maintenance Audit
+  maintenance:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Debug Trigger
-        run: echo "Manual trigger received. Limit input is ${{ github.event.inputs.limit }}"
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Validate Secrets
-        run: |
-          echo "Checking required secrets..."
-          if [ -z "${{ secrets.WP_URL }}" ]; then echo "❌ WP_URL is missing"; fi
-          if [ -z "${{ secrets.WP_USER }}" ]; then echo "❌ WP_USER is missing"; fi
-          if [ -z "${{ secrets.WP_APP_PASSWORD }}" ]; then echo "❌ WP_APP_PASSWORD is missing"; fi
-          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then echo "❌ GEMINI_API_KEY is missing"; fi
-          if [ -z "${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON }}" ]; then echo "⚠️ GEMINI_SERVICE_ACCOUNT_JSON is missing (optional)"; fi
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run Maintenance
-        env:
-          WP_URL: ${{ secrets.WP_URL }}
-          WP_USER: ${{ secrets.WP_USER }}
-          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SITE_URL: ${{ secrets.SITE_URL }}
-          SITE_NAME: ${{ secrets.SITE_NAME }}
-          GEMINI_SERVICE_ACCOUNT_JSON: ${{ secrets.GEMINI_SERVICE_ACCOUNT_JSON }}
-        run: |
-          # Create service account file if secret is provided
-          if [ -n "$GEMINI_SERVICE_ACCOUNT_JSON" ]; then
-            echo "$GEMINI_SERVICE_ACCOUNT_JSON" > sa.json
-            export GEMINI_SERVICE_ACCOUNT_KEY_FILE="sa.json"
-          fi
-          
-          # Extract limit from input or use default from GHA context
-          USER_LIMIT="${{ github.event.inputs.limit }}"
-          LIMIT="${USER_LIMIT:-10}"
-          
-          echo "🔧 Running maintenance with limit: $LIMIT"
-          python main.py maintenance $LIMIT
+    - name: Run Maintenance Script
+      env:
+        WP_URL: ${{ secrets.WP_URL }}
+        WP_USER: ${{ secrets.WP_USER }}
+        WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        SITE_NAME: "PedPro"
+        SITE_URL: "https://pedpro.online"
+      run: |
+        python tools/maintenance_manager.py --limit 20

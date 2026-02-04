@@ -12,10 +12,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
@@ -30,6 +30,7 @@ jobs:
         WP_USER: ${{ secrets.WP_USER }}
         WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         SITE_NAME: "PedPro"

@@ -364,33 +364,48 @@ class ImageGenerator:
         self.hf_token = os.environ.get("HUGGINGFACE_API_KEY")
         self.session = requests.Session()
 
-    def generate_image(self, prompt: str, mode: str = "daily") -> Optional[bytes]:
-        """Priority: Hugging Face SD 3.5 Large -> DALL-E 3 -> Gemini 3 Pro Image Preview."""
+    def generate_image(self, prompt: str, mode: str = "daily", content_context: str = None) -> Optional[bytes]:
+        """Generate an image with priority: Nanobana -> HuggingFace -> DALL-E -> Gemini Direct.
 
-        # 1. Try Hugging Face Stable Diffusion 3.5 Large (Primary)
+        Args:
+            prompt: Base prompt for image generation
+            mode: Generation mode (daily, maintenance, etc.)
+            content_context: Optional blog post content for context-aware prompt generation
+
+        Returns:
+            Image bytes if successful, None otherwise
+        """
+        # Enhance prompt with content context if provided
+        enhanced_prompt = self._enhance_prompt_with_context(prompt, content_context)
+
+        # 1. Try Nanobana via OpenRouter (Primary)
+        if self.gemini_client and self.gemini_client.is_using_openrouter():
+            logger.info("🎨 Attempting Nanobana via OpenRouter (Primary)...")
+            nanobana_image = self.generate_image_nanobana(enhanced_prompt)
+            if nanobana_image:
+                return nanobana_image
+
+        # 2. Try Hugging Face Stable Diffusion 3.5 Large (Fallback)
         if self.hf_token:
             try:
-                # Enhance prompt for better quality
-                enhanced_prompt = f"{prompt}, photorealistic, 8k, high fidelity, highly detailed, professional photography, cinematic lighting"
-                logger.info(f"📸 Attempting Hugging Face SD 3.5 Large generation (Primary)...")
-                hf_image = self.generate_image_huggingface(enhanced_prompt)
+                hf_prompt = f"{enhanced_prompt}, photorealistic, 8k, high fidelity, highly detailed, professional photography, cinematic lighting"
+                logger.info("📸 Attempting Hugging Face SD 3.5 Large (Fallback)...")
+                hf_image = self.generate_image_huggingface(hf_prompt)
                 if hf_image:
                     return hf_image
             except Exception as e:
                 logger.warning(f"Hugging Face failed: {e}")
 
-        # 2. Try DALL-E 3 (Fallback)
-        # Sanitize prompt for DALL-E 3 safety
-        safe_prompt = prompt[:900] # Ensure not too long
+        # 3. Try DALL-E 3 (Second Fallback)
+        safe_prompt = enhanced_prompt[:900]  # Ensure not too long
         dalle_image = self.generate_image_dalle(safe_prompt)
         if dalle_image:
             return dalle_image
 
-        # 3. Try Gemini 3 Pro Image Preview (Last Resort - requires API key, not Vertex AI)
+        # 4. Try Gemini Direct API (Last Resort - requires API key, not Vertex AI)
         if self.gemini_client and self.gemini_client.client and not self.gemini_client.is_using_vertexai():
-            logger.info("📸 Attempting Gemini 3 Pro Image Preview (fallback)...")
+            logger.info("📸 Attempting Gemini 3 Pro Image Preview (last resort)...")
 
-            # Show rate limiter stats
             stats = _gemini_rate_limiter.get_stats()
             logger.info(f"Rate Limit Stats: RPM {stats['rpm_current']}/{stats['rpm_limit']} "
                        f"({stats['rpm_utilization']:.1f}%), RPD {stats['rpd_current']}/{stats['rpd_limit']} "
@@ -406,7 +421,7 @@ class ImageGenerator:
                 )
                 response = self.gemini_client.client.models.generate_content(
                     model="gemini-3-pro-image-preview",
-                    contents=f"Generate a cinematic art piece based on: {prompt}",
+                    contents=f"Generate a cinematic art piece based on: {enhanced_prompt}",
                     config=config_options
                 )
                 if response.parts:
@@ -427,13 +442,74 @@ class ImageGenerator:
             )
             if result:
                 return result
-        elif self.gemini_client and self.gemini_client.is_using_vertexai():
-            logger.info("Vertex AI detected - Gemini 3 Pro Image requires Gemini API (API key)")
-            logger.info("Skipping Gemini (not available)")
-        else:
-            logger.info("Gemini client not available")
 
+        logger.warning("All image generation methods failed")
         return None
+
+    def _enhance_prompt_with_context(self, prompt: str, content_context: str = None) -> str:
+        """Enhance the image prompt using content context.
+
+        Args:
+            prompt: Base prompt
+            content_context: Blog post content for context
+
+        Returns:
+            Enhanced prompt with relevant keywords from content
+        """
+        if not content_context:
+            return prompt
+
+        # Extract key themes from content (first 500 chars for efficiency)
+        content_snippet = content_context[:500] if len(content_context) > 500 else content_context
+
+        # Use Gemini to generate an enhanced prompt if available
+        if self.gemini_client and self.gemini_client.is_using_openrouter():
+            try:
+                response = self.gemini_client.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=f"""Based on this blog post content, create a concise image prompt (max 100 words) that captures the main theme visually:
+
+Content: {content_snippet}
+
+Original prompt idea: {prompt}
+
+Return ONLY the image prompt, no explanation."""
+                )
+                if response and hasattr(response, 'text') and response.text:
+                    enhanced = response.text.strip()[:300]
+                    logger.info(f"Enhanced prompt: {enhanced[:80]}...")
+                    return enhanced
+            except Exception as e:
+                logger.warning(f"Prompt enhancement failed: {e}")
+
+        return prompt
+
+    def generate_image_nanobana(self, prompt: str, model: str = "gemini-2.5-flash-image") -> Optional[bytes]:
+        """Generate image using Nanobana (Gemini Image) via OpenRouter.
+
+        Args:
+            prompt: Image description
+            model: gemini-2.5-flash-image (fast) or gemini-3-pro-image (quality)
+
+        Returns:
+            Image bytes if successful, None otherwise
+        """
+        if not self.gemini_client or not self.gemini_client.is_using_openrouter():
+            logger.warning("Nanobana requires OpenRouter mode")
+            return None
+
+        def _try_nanobana():
+            return self.gemini_client.generate_image_openrouter(prompt, model=model)
+
+        result = call_with_smart_retry(
+            _try_nanobana,
+            service_name="Nanobana (OpenRouter)",
+            max_retries=3,
+            base_delay=2.0,
+            max_delay=30.0
+        )
+        return result
+
 
     def generate_image_huggingface(self, prompt: str) -> Optional[bytes]:
         # Use Stable Diffusion 3.5 Large

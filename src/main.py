@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Load env
-load_dotenv()
+load_dotenv(override=True)
 
 # --- CONFIGURATION ---
 WP_URL = os.environ.get("WP_URL")

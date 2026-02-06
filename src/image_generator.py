@@ -517,7 +517,6 @@ Return ONLY the image prompt, no explanation."""
             payload = {
                 "model": openrouter_model,
                 "messages": [{"role": "user", "content": image_prompt}],
-                "modalities": ["image", "text"],
             }
             headers = {
                 "Authorization": f"Bearer {openrouter_key}",

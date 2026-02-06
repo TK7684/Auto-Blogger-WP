@@ -378,8 +378,9 @@ class ImageGenerator:
         # Enhance prompt with content context if provided
         enhanced_prompt = self._enhance_prompt_with_context(prompt, content_context)
 
-        # 1. Try Nanobana via OpenRouter (Primary)
-        if self.gemini_client and self.gemini_client.is_using_openrouter():
+        # 1. Try Nanobana via OpenRouter (Primary) - always try if API key is available
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        if openrouter_key:
             logger.info("🎨 Attempting Nanobana via OpenRouter (Primary)...")
             nanobana_image = self.generate_image_nanobana(enhanced_prompt)
             if nanobana_image:
@@ -487,6 +488,9 @@ Return ONLY the image prompt, no explanation."""
     def generate_image_nanobana(self, prompt: str, model: str = "gemini-2.5-flash-image") -> Optional[bytes]:
         """Generate image using Nanobana (Gemini Image) via OpenRouter.
 
+        This method makes direct HTTP calls to OpenRouter, so it works regardless of
+        whether the main Gemini client is using Vertex AI or API key mode.
+
         Args:
             prompt: Image description
             model: gemini-2.5-flash-image (fast) or gemini-3-pro-image (quality)
@@ -494,21 +498,106 @@ Return ONLY the image prompt, no explanation."""
         Returns:
             Image bytes if successful, None otherwise
         """
-        if not self.gemini_client or not self.gemini_client.is_using_openrouter():
-            logger.warning("Nanobana requires OpenRouter mode")
+        import httpx
+        
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        if not openrouter_key:
+            logger.warning("Nanobana requires OPENROUTER_API_KEY")
             return None
 
-        def _try_nanobana():
-            return self.gemini_client.generate_image_openrouter(prompt, model=model)
+        # Model mapping
+        MODEL_MAP = {
+            "gemini-2.5-flash-image": "google/gemini-2.5-flash-preview-05-20",
+            "gemini-3-pro-image": "google/gemini-3-pro-image-preview",
+        }
+        openrouter_model = MODEL_MAP.get(model, f"google/{model}")
 
-        result = call_with_smart_retry(
+        def _try_nanobana():
+            image_prompt = f"Generate an image: {prompt}"
+            payload = {
+                "model": openrouter_model,
+                "messages": [{"role": "user", "content": image_prompt}],
+                "modalities": ["image", "text"],
+            }
+            headers = {
+                "Authorization": f"Bearer {openrouter_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": os.environ.get("SITE_URL", "https://example.com"),
+                "X-Title": os.environ.get("SITE_NAME", "Auto-Blogger"),
+            }
+
+            with httpx.Client(timeout=180.0) as http_client:
+                response = http_client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            # Parse response for image data
+            choices = data.get("choices", [])
+            if not choices:
+                raise ValueError("No choices in OpenRouter response")
+
+            message = choices[0].get("message", {})
+            content = message.get("content", "")
+
+            # Handle list format with image parts
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "image_url":
+                            image_url = part.get("image_url", {}).get("url", "")
+                            if image_url.startswith("data:image"):
+                                base64_data = image_url.split(",", 1)[1]
+                                logger.info("✅ Image generated via Nanobana (image_url format)")
+                                return base64.b64decode(base64_data)
+                        elif part.get("type") == "image" and part.get("data"):
+                            logger.info("✅ Image generated via Nanobana (image data format)")
+                            return base64.b64decode(part.get("data"))
+
+            # Handle data URL string format
+            if isinstance(content, str) and content.startswith("data:image"):
+                base64_data = content.split(",", 1)[1]
+                logger.info("✅ Image generated via Nanobana (data URL format)")
+                return base64.b64decode(base64_data)
+
+            # Check 'images' field
+            images = message.get("images", [])
+            if images:
+                image_item = images[0]
+                if isinstance(image_item, dict):
+                    for key in ["url", "data", "b64_json", "base64"]:
+                        if key in image_item:
+                            val = image_item[key]
+                            if isinstance(val, str):
+                                if val.startswith("data:image"):
+                                    base64_data = val.split(",", 1)[1]
+                                else:
+                                    base64_data = val
+                                logger.info(f"✅ Image generated via Nanobana (images field - {key})")
+                                return base64.b64decode(base64_data)
+                elif isinstance(image_item, str):
+                    if image_item.startswith("data:image"):
+                        base64_data = image_item.split(",", 1)[1]
+                    else:
+                        base64_data = image_item
+                    logger.info("✅ Image generated via Nanobana (images field - string)")
+                    return base64.b64decode(base64_data)
+
+            content_preview = str(content)[:200] if content else 'empty'
+            logger.warning(f"Nanobana returned unexpected format: {content_preview}")
+            return None
+
+        return call_with_smart_retry(
             _try_nanobana,
             service_name="Nanobana (OpenRouter)",
             max_retries=3,
             base_delay=2.0,
             max_delay=30.0
         )
-        return result
+
 
 
     def generate_image_huggingface(self, prompt: str) -> Optional[bytes]:

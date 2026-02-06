@@ -63,7 +63,7 @@ class TestContentGeneration(unittest.TestCase):
         # Let's test src.clients.gemini.GeminiClient since main.py uses it.
         from src.clients.gemini import GeminiClient
         client = GeminiClient("test_key")
-        result = client.generate_structured_output("model", "prompt", {})
+        result = client.generate_structured_output("model", "prompt", mock_data)
         
         self.assertIsNotNone(result)
         self.assertEqual(result.text, json.dumps(mock_data))

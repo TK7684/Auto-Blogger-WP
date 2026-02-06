@@ -213,6 +213,13 @@ def run_link_fix(components: Dict, limit: int = 50):
     stats = auditor.run_link_fix_only(limit=limit)
     logger.info("✅ Link Fix Complete.")
 
+def run_maintenance(components: Dict, limit: int = 10):
+    """Run maintenance checks on existing posts."""
+    logger.info(f"🔧 Starting Maintenance Mode (Limit: {limit})...")
+    auditor = components["auditor"]
+    stats = auditor.run_maintenance(limit=limit)
+    logger.info(f"✅ Maintenance Complete. Updated: {stats.get('updated', 0)}, Failed: {stats.get('failed', 0)}")
+
 
 def show_help():
     """Display usage information."""

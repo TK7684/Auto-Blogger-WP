@@ -6,14 +6,13 @@ import time
 import re
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
-import requests
-import base64
 
 # Add parent directory to path to import src modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.image_generator import ImageGenerator, WordPressMediaUploader
 from src.clients.gemini import GeminiClient
+from src.clients.wordpress import WordPressClient
 
 # Configure logging
 logging.basicConfig(
@@ -30,15 +29,20 @@ class MaintenanceManager:
     def __init__(self, dry_run: bool = False):
         load_dotenv(override=True)
         self.dry_run = dry_run
-        self.wp_url = os.environ.get("WP_URL").rstrip('/')
-        self.wp_user = os.environ.get("WP_USER")
-        self.wp_pass = os.environ.get("WP_APP_PASSWORD")
-        self.auth = (self.wp_user, self.wp_pass)
         
         # Initialize clients
-        self.gemini_client = GeminiClient()
+        self.wp_client = WordPressClient(
+            os.environ.get("WP_URL"),
+            os.environ.get("WP_USER"),
+            os.environ.get("WP_APP_PASSWORD")
+        )
+        self.gemini_client = GeminiClient(os.environ.get("GEMINI_API_KEY"))
         self.image_generator = ImageGenerator(gemini_client=self.gemini_client)
-        self.media_uploader = WordPressMediaUploader(self.wp_url, self.wp_user, self.wp_pass)
+        self.media_uploader = WordPressMediaUploader(
+            os.environ.get("WP_URL"),
+            os.environ.get("WP_USER"),
+            os.environ.get("WP_APP_PASSWORD")
+        )
         
         logger.info(f"Maintenance Manager initialized (Dry Run: {self.dry_run})")
         
@@ -52,44 +56,15 @@ class MaintenanceManager:
             logger.info("ℹ️ Using Vertex AI. Gemini Consumer API (Image Preview) may be unavailable.")
 
     def scan_posts(self, limit: int = 100, status: str = 'publish') -> List[Dict]:
-        """Fetch posts from WordPress."""
+        """Fetch posts from WordPress using standardized client."""
         logger.info(f"Scanning up to {limit} posts with status '{status}'...")
-        all_posts = []
-        page = 1
-        per_page = 20
-        
-        while len(all_posts) < limit:
-            try:
-                url = f"{self.wp_url}/wp-json/wp/v2/posts?status={status}&per_page={per_page}&page={page}"
-                response = requests.get(url, auth=self.auth)
-                
-                if response.status_code != 200:
-                    logger.error(f"Error fetching posts: {response.status_code} - {response.text}")
-                    break
-                    
-                posts = response.json()
-                if not posts:
-                    break
-                    
-                all_posts.extend(posts)
-                logger.info(f"Fetched {len(posts)} posts (Total: {len(all_posts)})")
-                
-                page += 1
-                if len(posts) < per_page:
-                    break
-                    
-            except Exception as e:
-                logger.error(f"Exception during scan: {e}")
-                break
-                
-        return all_posts[:limit]
+        return self.wp_client.fetch_posts(params={"status": status, "per_page": limit})
 
     def process_post(self, post: Dict):
         """Analyze and fix a single post."""
         post_id = post.get('id')
         title = post.get('title', {}).get('rendered', 'Untitled')
         content = post.get('content', {}).get('rendered', '')
-        link = post.get('link', '')
         
         logger.info(f"Processing Post {post_id}: '{title}'")
         
@@ -102,13 +77,11 @@ class MaintenanceManager:
             if not self.dry_run:
                 media_id = self.fix_featured_image(post_id, title)
                 if media_id:
-                    # We can't update featured_media via content update, need separate call or separate logic
-                    # standard WP API allows updating 'featured_media' in the POST body
-                    self.update_post_meta(post_id, {'featured_media': media_id})
+                    self.wp_client.update_post(post_id, {'featured_media': media_id})
                     logger.info(f"  [FIXED] Set featured media to ID {media_id}")
         
         # 2. Check Image Placeholders
-        placeholders = re.findall(r'\[IMAGE_PLACEHOLDER_\d+\]', content)
+        placeholders = re.findall(r'\[IMAGE_PLACE_HOLDER_\d+\]|\[IMAGE_PLACEHOLDER_\d+\]', content)
         if placeholders:
             logger.info(f"  [FOUND] {len(placeholders)} image placeholders: {placeholders}")
             new_content = self.fix_placeholders(content, title, placeholders)
@@ -118,7 +91,7 @@ class MaintenanceManager:
         # 3. Apply Content Updates
         if updates_needed:
             if not self.dry_run:
-                success = self.update_post_content(post_id, new_content)
+                success = self.wp_client.update_post(post_id, {'content': new_content})
                 if success:
                     logger.info(f"  [SUCCESS] Post {post_id} content updated.")
                 else:
@@ -151,10 +124,6 @@ class MaintenanceManager:
         fixed_content = content
         
         for placeholder in placeholders:
-            # Try to find context (heading before the placeholder)
-            # This is a simple heuristic; regex could be improved to find nearest H2/H3
-            # For now, we'll use the title + placeholder index as context to vary images
-            
             prompt = f"illustration for '{title}', section context {placeholder}, detailed, professional"
              
             if self.dry_run:
@@ -165,7 +134,7 @@ class MaintenanceManager:
             image_data = self.image_generator.generate_image(prompt)
             
             if image_data:
-                filename = f"content_{int(time.time())}_{placeholder.strip('[]')}.jpg"
+                filename = f"content_{int(time.time())}_{placeholder.strip('[]').replace('_', '')}.jpg"
                 filepath = self.image_generator.save_image(image_data, filename)
                 
                 if filepath:
@@ -185,33 +154,15 @@ class MaintenanceManager:
     def get_media_url(self, media_id: int) -> Optional[str]:
         """Fetch the source URL for a media item."""
         try:
-            url = f"{self.wp_url}/wp-json/wp/v2/media/{media_id}"
-            response = requests.get(url, auth=self.auth)
+            # We don't have a direct get_media in WordPressClient, but we can use fetch_terms or a generic request
+            # Let's use a simpler way since WP client doesn't have it yet
+            url = f"{self.wp_client.wp_url}/wp-json/wp/v2/media/{media_id}"
+            response = self.wp_client.session.get(url, headers=self.wp_client.headers)
             if response.status_code == 200:
                 return response.json().get('source_url')
         except Exception as e:
             logger.error(f"Error fetching media URL: {e}")
         return None
-
-    def update_post_content(self, post_id: int, new_content: str) -> bool:
-        """Update post content."""
-        url = f"{self.wp_url}/wp-json/wp/v2/posts/{post_id}"
-        try:
-            response = requests.post(url, auth=self.auth, json={'content': new_content})
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Error updating post content: {e}")
-            return False
-
-    def update_post_meta(self, post_id: int, data: Dict) -> bool:
-        """Update arbitrary post fields."""
-        url = f"{self.wp_url}/wp-json/wp/v2/posts/{post_id}"
-        try:
-            response = requests.post(url, auth=self.auth, json=data)
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Error updating post meta: {e}")
-            return False
 
 def main():
     parser = argparse.ArgumentParser(description="WordPress Auto-Blogging Maintenance Manager")
@@ -224,18 +175,12 @@ def main():
     manager = MaintenanceManager(dry_run=args.dry_run)
     
     if args.post_id:
-        # Process single post logic would need to be added to scan_posts or handled here
-        # For now, let's reuse scan logic but filter or fetch single
         logger.info(f"Fetching single post {args.post_id}...")
-        url = f"{manager.wp_url}/wp-json/wp/v2/posts/{args.post_id}"
-        try:
-            resp = requests.get(url, auth=manager.auth)
-            if resp.status_code == 200:
-                manager.process_post(resp.json())
-            else:
-                logger.error(f"Post {args.post_id} not found.")
-        except Exception as e:
-            logger.error(f"Error fetching post: {e}")
+        post = manager.wp_client.get_post(args.post_id)
+        if post:
+            manager.process_post(post)
+        else:
+            logger.error(f"Post {args.post_id} not found.")
     else:
         posts = manager.scan_posts(limit=args.limit)
         for post in posts:

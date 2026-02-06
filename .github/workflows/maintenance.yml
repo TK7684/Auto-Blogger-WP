@@ -18,6 +18,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
@@ -36,4 +37,15 @@ jobs:
         SITE_NAME: "PedPro"
         SITE_URL: "https://pedpro.online"
       run: |
-        python tools/maintenance_manager.py --limit 20
+        python tools/maintenance_manager.py --limit 10
+        
+    - name: Run SEO Content Audit
+      env:
+        WP_URL: ${{ secrets.WP_URL }}
+        WP_USER: ${{ secrets.WP_USER }}
+        WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        SITE_NAME: "PedPro"
+        SITE_URL: "https://pedpro.online"
+      run: |
+        python main.py maintenance 5

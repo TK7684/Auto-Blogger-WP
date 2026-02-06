@@ -1,14 +1,13 @@
-name: Auto-Blogger Bot
+name: Weekly Deep Dive
 
 on:
   schedule:
-    # 10:00 AM Thailand/Vietnam (UTC+7) = 03:00 UTC
-    - cron: '0 3 * * *'
-  # Allows you to click a button in GitHub to run it manually
+    # 10:00 AM Thailand/Vietnam (UTC+7) = 03:00 UTC on Sunday
+    - cron: '0 3 * * 0'
   workflow_dispatch:
 
 jobs:
-  build:
+  weekly:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,7 +25,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Auto-Blogger
+      - name: Run Weekly Deep Dive
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
@@ -37,4 +36,4 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SITE_NAME: "PedPro"
           SITE_URL: "https://pedpro.online"
-        run: python main.py
+        run: python main.py weekly

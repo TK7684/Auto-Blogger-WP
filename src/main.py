@@ -137,9 +137,10 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
         result = json.loads(response.text)
         meta = SEOArticleMetadata.model_validate(result)  # Type-safe validation
 
-        logger.info("✅ Content generated.")
+        logger.info(f"✅ Content generated successfully. Title: '{meta.seo_title}'")
+        logger.info(f"🔑 Focus Keyword: {meta.focus_keyword}")
     except Exception as e:
-        logger.error(f"Content generation error: {e}")
+        logger.error(f"❌ Content generation error: {e}")
         return
 
     # 3. IMAGE GENERATION (Optional)
@@ -200,12 +201,10 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
     else:
         logger.error("Failed to create post in WordPress.")
 
-def run_maintenance(components: Dict, limit: int = 10):
-    """Run the full maintenance auditor (SEO + content + links)."""
     logger.info(f"🔧 Starting Maintenance Mode (Limit: {limit})...")
     auditor = components["auditor"]
     stats = auditor.run_maintenance(limit=limit)
-    logger.info("✅ Maintenance Complete.")
+    logger.info(f"✅ Maintenance Complete. Updated: {stats.get('updated', 0)}, Failed: {stats.get('failed', 0)}")
 
 def run_link_fix(components: Dict, limit: int = 50):
     """Quick mode: Only fix internal link placeholders."""

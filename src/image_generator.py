@@ -507,7 +507,7 @@ Return ONLY the image prompt, no explanation."""
 
         # Model mapping
         MODEL_MAP = {
-            "gemini-2.5-flash-image": "google/gemini-2.0-flash-exp:free",
+            "gemini-2.5-flash-image": "google/gemini-2.0-flash-001",
             "gemini-3-pro-image": "google/gemini-3-pro-image-preview",
         }
         openrouter_model = MODEL_MAP.get(model, f"google/{model}")

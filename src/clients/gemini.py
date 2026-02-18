@@ -153,7 +153,17 @@ class GeminiClient:
         if config:
             if hasattr(config, 'temperature') and config.temperature is not None:
                 payload["temperature"] = config.temperature
-            if hasattr(config, 'response_mime_type') and config.response_mime_type == "application/json":
+            # Prefer strict JSON-schema enforcement over generic json_object when schema is available
+            if hasattr(config, 'response_json_schema') and config.response_json_schema is not None:
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "response_schema",
+                        "strict": True,
+                        "schema": config.response_json_schema,
+                    },
+                }
+            elif hasattr(config, 'response_mime_type') and config.response_mime_type == "application/json":
                 payload["response_format"] = {"type": "json_object"}
 
         headers = {
@@ -186,8 +196,8 @@ class GeminiClient:
         return OpenRouterResponse(data)
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=4, max=20),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
         retry=retry_if_exception_type((ClientError, httpx.HTTPStatusError)),
         reraise=True
     )
@@ -207,19 +217,50 @@ class GeminiClient:
         )
 
     def generate_structured_output(self, model: str, prompt: str, schema: Dict, tools: Optional[list] = None) -> Optional[Any]:
-        """Generate content expected to match a specific JSON schema."""
-        config = types.GenerateContentConfig(
-            tools=tools,
-            response_mime_type="application/json",
-            response_json_schema=schema,
-            temperature=1.0
-        )
-        try:
-            response = self.generate_content(model, prompt, config)
-            return response
-        except Exception as e:
-            logger.error(f"Structured output generation failed: {e}")
-            return None
+        """Generate content expected to match a specific JSON schema with model fallback."""
+        # Primary model list with fallback options
+        model_fallback_order = [model, "gemini-2.0-flash", "gemini-1.5-flash"]
+        
+        # Build config - avoid thinking_level for models that don't support it
+        config_params = {
+            "response_mime_type": "application/json",
+            "response_json_schema": schema,
+            "temperature": 1.0
+        }
+        
+        # Only add tools if provided (avoid None value)
+        if tools is not None:
+            config_params["tools"] = tools
+        
+        # Avoid thinking_level parameter for models that don't support it (gemini-2.0-flash)
+        # Models that support thinking_level: gemini-2.0-flash-thinking-exp, gemini-2.5-pro
+        models_with_thinking = [
+            "gemini-2.0-flash-thinking-exp",
+            "gemini-2.5-pro",
+            "gemini-2.5-pro-preview",
+            "gemini-3-pro",
+            "gemini-3-pro-preview"
+        ]
+        
+        if any(thinking_model in model for thinking_model in models_with_thinking):
+            config_params["thinking_level"] = "medium"
+        
+        config = types.GenerateContentConfig(**config_params)
+        
+        # Try each model in fallback order
+        for attempt_model in model_fallback_order:
+            try:
+                logger.info(f"Attempting structured output with model: {attempt_model}")
+                response = self.generate_content(attempt_model, prompt, config)
+                if response and response.text:
+                    logger.info(f"✅ Structured output generated with model: {attempt_model}")
+                    return response
+            except Exception as e:
+                logger.warning(f"⚠️ Model {attempt_model} failed: {e}")
+                continue
+        
+        logger.error(f"❌ All models failed for structured output generation")
+        return None
 
     def generate_image_openrouter(
         self,

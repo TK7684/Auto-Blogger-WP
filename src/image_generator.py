@@ -757,12 +757,11 @@ Return ONLY the image prompt, no explanation."""
         logger.info(f"📤 Sending to OpenRouter FLUX 1.1 Pro. Prompt: {safe_prompt[:120]}...")
 
         def _try_flux():
+            # FLUX via OpenRouter uses the standard chat/completions endpoint
             payload = {
                 "model": "black-forest-labs/flux-1.1-pro",
-                "prompt": safe_prompt,
-                "n": 1,
-                "size": "1024x1024",
-                "response_format": "b64_json",
+                "messages": [{"role": "user", "content": f"Generate an image: {safe_prompt}"}],
+                "modalities": ["image", "text"],
             }
             headers = {
                 "Authorization": f"Bearer {openrouter_key}",
@@ -772,7 +771,7 @@ Return ONLY the image prompt, no explanation."""
             }
             with _httpx.Client(timeout=180.0) as http_client:
                 response = http_client.post(
-                    "https://openrouter.ai/api/v1/images/generations",
+                    "https://openrouter.ai/api/v1/chat/completions",
                     headers=headers,
                     json=payload,
                 )
@@ -784,20 +783,46 @@ Return ONLY the image prompt, no explanation."""
                 raise requests.exceptions.HTTPError(f"HTTP {response.status_code}: {error_text}")
 
             data = response.json()
-            items = data.get("data", [])
-            if not items:
-                raise ValueError("OpenRouter FLUX returned no image data")
+            choices = data.get("choices", [])
+            if not choices:
+                raise ValueError("OpenRouter FLUX: no choices in response")
 
-            item = items[0]
-            if item.get("b64_json"):
-                logger.info("✅ Image generated via OpenRouter FLUX 1.1 Pro (b64_json)")
-                return base64.b64decode(item["b64_json"])
-            if item.get("url"):
-                img_resp = _httpx.get(item["url"], timeout=60.0)
-                if img_resp.status_code == 200:
-                    logger.info("✅ Image generated via OpenRouter FLUX 1.1 Pro (url download)")
-                    return img_resp.content
-            raise ValueError(f"OpenRouter FLUX unexpected response structure: {str(item)[:200]}")
+            message = choices[0].get("message", {})
+            content = message.get("content", "")
+
+            # Handle list format with image parts
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "image_url":
+                            image_url = part.get("image_url", {}).get("url", "")
+                            if image_url.startswith("data:image"):
+                                base64_data = image_url.split(",", 1)[1]
+                                logger.info("✅ Image generated via OpenRouter FLUX 1.1 Pro (image_url)")
+                                return base64.b64decode(base64_data)
+                            elif image_url:
+                                # Download from URL
+                                img_resp = _httpx.get(image_url, timeout=60.0)
+                                if img_resp.status_code == 200:
+                                    logger.info("✅ Image generated via OpenRouter FLUX 1.1 Pro (url download)")
+                                    return img_resp.content
+                        elif part.get("type") == "image" and part.get("data"):
+                            logger.info("✅ Image generated via OpenRouter FLUX 1.1 Pro (image data)")
+                            return base64.b64decode(part["data"])
+
+            # Handle data URL string format
+            if isinstance(content, str) and content.startswith("data:image"):
+                base64_data = content.split(",", 1)[1]
+                logger.info("✅ Image generated via OpenRouter FLUX 1.1 Pro (data URL)")
+                return base64.b64decode(base64_data)
+
+            # Text response = policy rejection or unsupported
+            content_preview = str(content)[:200] if content else "empty"
+            if isinstance(content, str) and content.strip():
+                logger.error(f"❌ OpenRouter FLUX returned text instead of image: {content_preview}")
+                raise ValueError(f"OpenRouter FLUX policy/unsupported: {content_preview}")
+
+            raise ValueError(f"OpenRouter FLUX unexpected response: {content_preview}")
 
         return call_with_smart_retry(
             _try_flux,

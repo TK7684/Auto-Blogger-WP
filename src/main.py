@@ -22,6 +22,7 @@ from src.clients.gemini import GeminiClient
 from src.clients.wordpress import WordPressClient
 from src.yoast_seo import YoastSEOIntegrator
 from src.utils.linking import resolve_internal_links, clean_remaining_placeholders
+from src.utils import normalize_dict_keys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -124,8 +125,9 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
         suggested_tags: List[str] = Field(description="List of relevant WordPress tag names")
 
     try:
+        # Use gemini-2.5-flash which has better availability and supports structured output
         response = gemini.generate_structured_output(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             prompt=full_prompt,
             schema=SEOArticleMetadata.model_json_schema()
         )
@@ -135,6 +137,7 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
             return
 
         result = json.loads(response.text)
+        result = normalize_dict_keys(result)  # Normalize uppercase/MixedCase keys → snake_case
         meta = SEOArticleMetadata.model_validate(result)  # Type-safe validation
 
         logger.info(f"✅ Content generated successfully. Title: '{meta.seo_title}'")
@@ -200,11 +203,6 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
         logger.info("✅ Yoast SEO fields updated")
     else:
         logger.error("Failed to create post in WordPress.")
-
-    logger.info(f"🔧 Starting Maintenance Mode (Limit: {limit})...")
-    auditor = components["auditor"]
-    stats = auditor.run_maintenance(limit=limit)
-    logger.info(f"✅ Maintenance Complete. Updated: {stats.get('updated', 0)}, Failed: {stats.get('failed', 0)}")
 
 def run_link_fix(components: Dict, limit: int = 50):
     """Quick mode: Only fix internal link placeholders."""

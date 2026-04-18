@@ -80,6 +80,37 @@ def initialize_system() -> Dict:
         "yoast": yoast
     }
 
+# --- DISCORD NOTIFICATION ---
+
+def _notify_discord(title: str, url: str, description: str, topic: str):
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        logger.debug("No DISCORD_WEBHOOK_URL set — skipping notification")
+        return
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "embeds": [{
+                "title": f"📝 New Post Published",
+                "description": f"**{title}**\n\n{description[:200]}",
+                "url": url,
+                "color": 0x00b894,
+                "fields": [
+                    {"name": "Topic", "value": topic, "inline": True},
+                    {"name": "Link", "value": f"[Read →]({url})", "inline": True}
+                ],
+                "footer": {"text": "Auto-Blogger-WP → PedPro"}
+            }]
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            webhook_url, data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "Auto-Blogger-WP/1.0"}
+        )
+        urllib.request.urlopen(req, timeout=10)
+        logger.info("📢 Discord notification sent")
+    except Exception as e:
+        logger.warning(f"Discord notification failed: {e}")
+
 # --- PROCESSES ---
 
 def run_content_generation(components: Dict, mode: str = "daily", manual_topic: str = None):
@@ -194,13 +225,13 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
 
     if post_id:
         logger.info(f"🚀 Published Post ID: {post_id}")
-        # Update Yoast
         yoast.update_yoast_meta_fields(post_id, {
             "focus_keyword": meta.focus_keyword,
             "seo_title": meta.seo_title,
             "meta_description": meta.meta_description
         })
         logger.info("✅ Yoast SEO fields updated")
+        _notify_discord(meta.seo_title, post_url, meta.meta_description, topic)
     else:
         logger.error("Failed to create post in WordPress.")
 

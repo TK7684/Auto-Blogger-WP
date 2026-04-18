@@ -41,8 +41,10 @@ class GeminiClient:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.service_account_file = service_account_file or os.environ.get("GEMINI_SERVICE_ACCOUNT_KEY_FILE")
         self.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
+        self.zai_api_key = os.environ.get("ZAI_API_KEY")
         self._using_vertexai = False
         self._using_openrouter = False
+        self._using_zai = False
         self._current_region_index = 0
         self._credentials = None
         self._project_id = None
@@ -52,18 +54,25 @@ class GeminiClient:
         """Initialize the GenAI client with preferred authentication.
 
         Priority:
-        1. OpenRouter (if OPENROUTER_API_KEY is set)
-        2. Vertex AI (if service account file exists)
-        3. Google AI API (if GEMINI_API_KEY is set)
+        1. Z.AI (GLM) (if ZAI_API_KEY is set)
+        2. OpenRouter (if OPENROUTER_API_KEY is set)
+        3. Vertex AI (if service account file exists)
+        4. Google AI API (if GEMINI_API_KEY is set)
         """
         try:
-            # 1. Check for OpenRouter first
+            # 1. Check for Z.AI (GLM) first
+            if self.zai_api_key:
+                logger.info("Initializing with Z.AI (GLM) backend")
+                self._using_zai = True
+                return None  # No genai.Client needed for Z.AI
+
+            # 2. Check for OpenRouter
             if self.openrouter_api_key:
                 logger.info("Initializing Gemini with OpenRouter backend")
                 self._using_openrouter = True
                 return None  # No genai.Client needed for OpenRouter
 
-            # 2. Check for Vertex AI service account
+            # 3. Check for Vertex AI service account
             if self.service_account_file:
                 resolved_path = Path(self.service_account_file).resolve()
                 if resolved_path.exists():
@@ -79,15 +88,15 @@ class GeminiClient:
                 else:
                     logger.warning(f"Service account file not found: {resolved_path}")
 
-            # 3. Fallback to API key
+            # 4. Fallback to API key
             if self.api_key:
                 logger.info("Initializing Gemini with API key")
                 self._using_vertexai = False
                 return genai.Client(api_key=self.api_key)
 
-            logger.error("No valid Gemini credentials found")
+            logger.error("No valid credentials found")
         except Exception as e:
-            logger.error(f"Error initializing Gemini client: {e}")
+            logger.error(f"Error initializing client: {e}")
         return None
 
     def _create_client_for_region(self, region: str) -> genai.Client:
@@ -119,9 +128,81 @@ class GeminiClient:
         """Check if the client is using OpenRouter backend."""
         return self._using_openrouter
 
+    def is_using_zai(self) -> bool:
+        """Check if the client is using Z.AI (GLM) backend."""
+        return self._using_zai
+
     def _map_model_to_openrouter(self, model: str) -> str:
         """Map a Gemini model name to its OpenRouter equivalent."""
         return OPENROUTER_MODEL_MAP.get(model, f"google/{model}")
+
+    def _generate_zai_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
+        """Generate content using Z.AI (GLM) API with OpenAI-compatible format."""
+        logger.info(f"Calling Z.AI API (Model: {model})")
+
+        # Convert contents to OpenAI chat format
+        messages = []
+        if isinstance(contents, str):
+            messages = [{"role": "user", "content": contents}]
+        elif isinstance(contents, list):
+            for item in contents:
+                if isinstance(item, str):
+                    messages.append({"role": "user", "content": item})
+                elif hasattr(item, 'text'):
+                    messages.append({"role": "user", "content": item.text})
+                elif isinstance(item, dict):
+                    messages.append(item)
+        else:
+            messages = [{"role": "user", "content": str(contents)}]
+
+        # Build request payload
+        payload = {
+            "model": model or "glm-4-plus",
+            "messages": messages,
+        }
+
+        # Add config options if provided
+        if config:
+            if hasattr(config, 'temperature') and config.temperature is not None:
+                payload["temperature"] = config.temperature
+            if hasattr(config, 'response_json_schema') and config.response_json_schema is not None:
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "response_schema",
+                        "strict": True,
+                        "schema": config.response_json_schema,
+                    },
+                }
+            elif hasattr(config, 'response_mime_type') and config.response_mime_type == "application/json":
+                payload["response_format"] = {"type": "json_object"}
+
+        headers = {
+            "Authorization": f"Bearer {self.zai_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        with httpx.Client(timeout=120.0) as http_client:
+            response = http_client.post(
+                "https://api.z.ai/api/coding/paas/v4/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        # Create a response object that mimics genai response structure
+        class ZAIResponse:
+            def __init__(self, data: dict):
+                self._data = data
+                choice = data.get("choices", [{}])[0]
+                message = choice.get("message", {})
+                self.text = message.get("content", "")
+
+            def __repr__(self):
+                return f"ZAIResponse(text='{self.text[:50]}...')"
+
+        return ZAIResponse(data)
 
     def _generate_openrouter_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
         """Generate content using OpenRouter API."""
@@ -203,11 +284,14 @@ class GeminiClient:
     )
     def generate_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
         """Generate content with retry logic for API errors."""
+        if self._using_zai:
+            return self._generate_zai_content(model, contents, config)
+
         if self._using_openrouter:
             return self._generate_openrouter_content(model, contents, config)
 
         if not self.client:
-            raise RuntimeError("Gemini client not initialized")
+            raise RuntimeError("Client not initialized")
 
         logger.info(f"Calling Gemini API (Model: {model})")
         return self.client.models.generate_content(

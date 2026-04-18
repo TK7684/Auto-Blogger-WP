@@ -448,10 +448,11 @@ class ImageGenerator:
     def __init__(self, gemini_client: Optional[GeminiClient] = None):
         self.gemini_client = gemini_client
         self.hf_token = os.environ.get("HUGGINGFACE_API_KEY")
+        self.comfyui_url = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
         self.session = requests.Session()
 
     def generate_image(self, prompt: str, mode: str = "daily", content_context: str = None) -> Optional[bytes]:
-        """Generate an image with priority: OpenRouter -> HuggingFace -> DALL-E -> Gemini Direct.
+        """Generate an image with priority: ComfyUI -> OpenRouter -> HuggingFace -> DALL-E -> Gemini Direct.
 
         Args:
             prompt: Base prompt for image generation
@@ -464,7 +465,17 @@ class ImageGenerator:
         # Enhance prompt with content context if provided
         enhanced_prompt = self._enhance_prompt_with_context(prompt, content_context)
 
-        # 1. Try OpenRouter (Primary) - always try if API key is available
+        # 0. Try ComfyUI (Primary - if running locally)
+        logger.info("🎨 Attempting ComfyUI (Primary)...")
+        try:
+            comfyui_image = self.generate_image_comfyui(enhanced_prompt)
+            if comfyui_image:
+                logger.info("✅ Image generated successfully via ComfyUI")
+                return comfyui_image
+        except Exception as e:
+            logger.warning(f"⚠️ ComfyUI not available or failed: {e}")
+
+        # 1. Try OpenRouter (Secondary) - always try if API key is available
         openrouter_key = os.environ.get("OPENROUTER_API_KEY")
         if openrouter_key:
             logger.info("🎨 Attempting OpenRouter image generation (Primary)...")
@@ -603,6 +614,153 @@ Return ONLY the image prompt, no explanation."""
                 logger.warning(f"Prompt enhancement failed: {e}")
 
         return prompt
+
+    def generate_image_comfyui(self, prompt: str) -> Optional[bytes]:
+        """Generate image using ComfyUI (local SDXL workflow).
+
+        Requires ComfyUI running on COMFYUI_URL (default: http://127.0.0.1:8188).
+        Uses a simple SDXL txt2img workflow.
+
+        Args:
+            prompt: Image description
+
+        Returns:
+            Image bytes if successful, None otherwise
+        """
+        import json
+        import time as _time
+        import uuid
+
+        # Check if ComfyUI is available
+        try:
+            response = requests.get(f"{self.comfyui_url}/system_stats", timeout=2.0)
+            if response.status_code != 200:
+                logger.warning(f"ComfyUI returned HTTP {response.status_code}")
+                return None
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"ComfyUI not available at {self.comfyui_url}: {e}")
+            return None
+
+        # Build SDXL txt2img workflow
+        workflow = {
+            "1": {
+                "inputs": {
+                    "ckpt_name": "sd_xl_base_1.0.safetensors"  # Common SDXL checkpoint
+                },
+                "class_type": "CheckpointLoaderSimple"
+            },
+            "2": {
+                "inputs": {
+                    "text": prompt,
+                    "clip": ["1", 1]
+                },
+                "class_type": "CLIPTextEncode"
+            },
+            "3": {
+                "inputs": {
+                    "text": "",  # Negative prompt
+                    "clip": ["1", 1]
+                },
+                "class_type": "CLIPTextEncode"
+            },
+            "4": {
+                "inputs": {
+                    "seed": int(uuid.uuid4().int % (2**32)),
+                    "steps": 20,
+                    "cfg": 7.0,
+                    "sampler_name": "euler",
+                    "scheduler": "normal",
+                    "denoise": 1.0,
+                    "model": ["1", 0],
+                    "positive": ["2", 0],
+                    "negative": ["3", 0],
+                    "latent_image": ["5", 0]
+                },
+                "class_type": "KSampler"
+            },
+            "5": {
+                "inputs": {
+                    "width": 1024,
+                    "height": 1024,
+                    "batch_size": 1
+                },
+                "class_type": "EmptyLatentImage"
+            },
+            "6": {
+                "inputs": {
+                    "samples": ["4", 0],
+                    "vae": ["1", 2]
+                },
+                "class_type": "VAEDecode"
+            },
+            "7": {
+                "inputs": {
+                    "filename_prefix": "auto_blogger",
+                    "images": ["6", 0]
+                },
+                "class_type": "SaveImage"
+            }
+        }
+
+        try:
+            # Submit workflow
+            logger.info(f"📤 Submitting workflow to ComfyUI: {prompt[:80]}...")
+            response = requests.post(
+                f"{self.comfyui_url}/prompt",
+                json={"prompt": workflow},
+                timeout=10.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            prompt_id = data.get("prompt_id")
+
+            if not prompt_id:
+                logger.error("ComfyUI returned no prompt_id")
+                return None
+
+            logger.info(f"Workflow submitted: {prompt_id}")
+
+            # Poll for completion (max 120 seconds)
+            start_time = _time.time()
+            while _time.time() - start_time < 120.0:
+                try:
+                    hist_response = requests.get(
+                        f"{self.comfyui_url}/history/{prompt_id}",
+                        timeout=5.0
+                    )
+                    hist_response.raise_for_status()
+                    history = hist_response.json()
+
+                    if prompt_id in history:
+                        result = history[prompt_id]
+                        # Check if generation is complete
+                        if "outputs" in result and "7" in result["outputs"]:
+                            images = result["outputs"]["7"].get("images", [])
+                            if images:
+                                image_name = images[0].get("filename")
+                                if image_name:
+                                    # Download image
+                                    image_response = requests.get(
+                                        f"{self.comfyui_url}/view?filename={image_name}",
+                                        timeout=10.0
+                                    )
+                                    image_response.raise_for_status()
+                                    logger.info(f"✅ Image generated via ComfyUI")
+                                    return image_response.content
+                except requests.exceptions.RequestException:
+                    pass  # Retry polling
+
+                _time.sleep(2.0)
+
+            logger.error("ComfyUI generation timeout (120s)")
+            return None
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"ComfyUI request failed: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"ComfyUI generation failed: {e}")
+            return None
 
     def generate_image_nanobana(self, prompt: str, model: str = "gemini-2.5-flash-image") -> Optional[bytes]:
         """Generate image using Nanobana (Gemini Image) via OpenRouter.

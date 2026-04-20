@@ -136,9 +136,17 @@ class GeminiClient:
         """Map a Gemini model name to its OpenRouter equivalent."""
         return OPENROUTER_MODEL_MAP.get(model, f"google/{model}")
 
+    ZAI_MODEL_MAP = {
+        "gemini-2.5-flash": "glm-4-plus",
+        "gemini-2.0-flash": "glm-4-plus",
+        "gemini-1.5-pro": "glm-4-plus",
+        "gemini-1.5-flash": "glm-4-flash",
+    }
+
     def _generate_zai_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
         """Generate content using Z.AI (GLM) API with OpenAI-compatible format."""
-        logger.info(f"Calling Z.AI API (Model: {model})")
+        zai_model = self.ZAI_MODEL_MAP.get(model, "glm-4-plus")
+        logger.info(f"Calling Z.AI API (Model: {model} → {zai_model})")
 
         # Convert contents to OpenAI chat format
         messages = []
@@ -157,7 +165,7 @@ class GeminiClient:
 
         # Build request payload
         payload = {
-            "model": model or "glm-4-plus",
+            "model": zai_model,
             "messages": messages,
         }
 

@@ -42,8 +42,11 @@ IMAGE_GENERATION_ENABLED = os.environ.get("IMAGE_GENERATION_ENABLED", "true").lo
 # --- INITIALIZATION ---
 def initialize_system() -> Dict:
     """Initialize all clients and agents."""
-    if not all([WP_URL, WP_USER, WP_APP_PASSWORD, GEMINI_API_KEY]):
-        logger.error("Missing critical environment variables.")
+    zai_key = os.environ.get("ZAI_API_KEY")
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    has_llm = any([GEMINI_API_KEY, zai_key, openrouter_key])
+    if not all([WP_URL, WP_USER, WP_APP_PASSWORD]) or not has_llm:
+        logger.error("Missing critical environment variables. Need WP creds + at least one LLM key (ZAI_API_KEY, GEMINI_API_KEY, or OPENROUTER_API_KEY).")
         return {}
 
     # 1. Clients

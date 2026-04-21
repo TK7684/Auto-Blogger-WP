@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import time
 from pathlib import Path
 from typing import Optional, Any, Dict
 import httpx
@@ -10,6 +11,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from google.genai.errors import ClientError
 
 logger = logging.getLogger(__name__)
+
+# Global rate limiter state
+_last_zai_request_time = 0
+_last_openrouter_request_time = 0
+_zai_min_interval = 5  # Minimum 5 seconds between Z.AI requests
+_openrouter_min_interval = 2  # Minimum 2 seconds between OpenRouter requests
 
 
 # OpenRouter Model Mapping
@@ -136,15 +143,23 @@ class GeminiClient:
         """Map a Gemini model name to its OpenRouter equivalent."""
         return OPENROUTER_MODEL_MAP.get(model, f"google/{model}")
 
+    # Coding Plan Max models: glm-5.1 (flagship, reasoning, 200K ctx) and glm-5-turbo (faster, lighter).
+    # Map quality-tier Gemini models → glm-5.1, fast-tier → glm-5-turbo.
+    # Benefits: glm-5-turbo burns less quota → better fallback behavior on rate limits.
     ZAI_MODEL_MAP = {
-        "gemini-2.5-flash": "glm-4-plus",
-        "gemini-2.0-flash": "glm-4-plus",
-        "gemini-1.5-pro": "glm-4-plus",
-        "gemini-1.5-flash": "glm-4-flash",
+        "gemini-2.5-flash": "glm-5.1",       # quality + thinking → flagship
+        "gemini-2.0-flash": "glm-5-turbo",   # general-purpose fast → turbo
+        "gemini-1.5-pro":   "glm-5.1",       # long-context + reasoning → flagship
+        "gemini-1.5-flash": "glm-5-turbo",   # quick, cheap → turbo
     }
 
     def _generate_zai_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
-        """Generate content using Z.AI (GLM) API with OpenAI-compatible format."""
+        """Generate content using Z.AI (GLM) API with OpenAI-compatible format.
+
+        Implements rate limiting, exponential backoff on 429 errors, and graceful degradation.
+        """
+        global _last_zai_request_time
+
         zai_model = self.ZAI_MODEL_MAP.get(model, "glm-4-plus")
         logger.info(f"Calling Z.AI API (Model: {model} → {zai_model})")
 
@@ -190,30 +205,84 @@ class GeminiClient:
             "Content-Type": "application/json",
         }
 
-        with httpx.Client(timeout=120.0) as http_client:
-            response = http_client.post(
-                "https://api.z.ai/api/coding/paas/v4/chat/completions",
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
+        # Rate limiting: enforce minimum interval between requests
+        time_since_last = time.time() - _last_zai_request_time
+        if time_since_last < _zai_min_interval:
+            sleep_time = _zai_min_interval - time_since_last
+            logger.debug(f"Rate limiting: sleeping {sleep_time:.1f}s before Z.AI request")
+            time.sleep(sleep_time)
 
-        # Create a response object that mimics genai response structure
-        class ZAIResponse:
-            def __init__(self, data: dict):
-                self._data = data
-                choice = data.get("choices", [{}])[0]
-                message = choice.get("message", {})
-                self.text = message.get("content", "")
+        # Exponential backoff for 429 errors
+        max_retries = 5
+        retry_count = 0
+        backoff_base = 30  # Start at 30 seconds
 
-            def __repr__(self):
-                return f"ZAIResponse(text='{self.text[:50]}...')"
+        while retry_count < max_retries:
+            try:
+                _last_zai_request_time = time.time()
+                # glm-5.1 is a reasoning model — long outputs exceed 120s. 300s is safer.
+                with httpx.Client(timeout=300.0) as http_client:
+                    response = http_client.post(
+                        "https://api.z.ai/api/coding/paas/v4/chat/completions",
+                        headers=headers,
+                        json=payload
+                    )
 
-        return ZAIResponse(data)
+                    if response.status_code == 429:
+                        # Rate limited - exponential backoff
+                        retry_count += 1
+                        wait_time = backoff_base * (2 ** (retry_count - 1))
+                        logger.warning(f"Z.AI rate limited (429). Retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+
+                    response.raise_for_status()
+                    data = response.json()
+
+                # Create a response object that mimics genai response structure
+                class ZAIResponse:
+                    def __init__(self, data: dict):
+                        self._data = data
+                        choice = data.get("choices", [{}])[0]
+                        message = choice.get("message", {})
+                        content = message.get("content", "") or ""
+                        # glm-5.1 wraps JSON in ```json ... ``` fences even with strict schema.
+                        # Strip them so downstream json.loads() works.
+                        stripped = content.strip()
+                        if stripped.startswith("```"):
+                            stripped = stripped.split("\n", 1)[1] if "\n" in stripped else stripped[3:]
+                            if stripped.endswith("```"):
+                                stripped = stripped[: -3].rstrip()
+                            # Drop a leading "json" language tag if present on its own line
+                            if stripped.lstrip().lower().startswith("json\n"):
+                                stripped = stripped.lstrip()[5:]
+                        self.text = stripped
+
+                    def __repr__(self):
+                        return f"ZAIResponse(text='{self.text[:50]}...')"
+
+                return ZAIResponse(data)
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logger.error(f"Z.AI rate limit exceeded after {max_retries} retries. Giving up.")
+                        raise
+                    wait_time = backoff_base * (2 ** (retry_count - 1))
+                    logger.warning(f"Z.AI rate limited (429). Retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Z.AI request failed: {e}")
+                raise
 
     def _generate_openrouter_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
-        """Generate content using OpenRouter API."""
+        """Generate content using OpenRouter API with rate limiting and backoff."""
+        global _last_openrouter_request_time
+
         openrouter_model = self._map_model_to_openrouter(model)
         logger.info(f"Calling OpenRouter API (Model: {openrouter_model})")
 
@@ -262,31 +331,70 @@ class GeminiClient:
             "X-Title": os.environ.get("SITE_NAME", "Auto-Blogger"),
         }
 
-        with httpx.Client(timeout=120.0) as http_client:
-            response = http_client.post(
-                f"{self.OPENROUTER_BASE_URL}/chat/completions",
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
+        # Rate limiting: enforce minimum interval between requests
+        time_since_last = time.time() - _last_openrouter_request_time
+        if time_since_last < _openrouter_min_interval:
+            sleep_time = _openrouter_min_interval - time_since_last
+            logger.debug(f"Rate limiting: sleeping {sleep_time:.1f}s before OpenRouter request")
+            time.sleep(sleep_time)
 
-        # Create a response object that mimics genai response structure
-        class OpenRouterResponse:
-            def __init__(self, data: dict):
-                self._data = data
-                choice = data.get("choices", [{}])[0]
-                message = choice.get("message", {})
-                self.text = message.get("content", "")
+        # Exponential backoff for 429 errors
+        max_retries = 5
+        retry_count = 0
+        backoff_base = 30
 
-            def __repr__(self):
-                return f"OpenRouterResponse(text='{self.text[:50]}...')"
+        while retry_count < max_retries:
+            try:
+                _last_openrouter_request_time = time.time()
+                with httpx.Client(timeout=120.0) as http_client:
+                    response = http_client.post(
+                        f"{self.OPENROUTER_BASE_URL}/chat/completions",
+                        headers=headers,
+                        json=payload
+                    )
 
-        return OpenRouterResponse(data)
+                    if response.status_code == 429:
+                        retry_count += 1
+                        wait_time = backoff_base * (2 ** (retry_count - 1))
+                        logger.warning(f"OpenRouter rate limited (429). Retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+
+                    response.raise_for_status()
+                    data = response.json()
+
+                # Create a response object that mimics genai response structure
+                class OpenRouterResponse:
+                    def __init__(self, data: dict):
+                        self._data = data
+                        choice = data.get("choices", [{}])[0]
+                        message = choice.get("message", {})
+                        self.text = message.get("content", "")
+
+                    def __repr__(self):
+                        return f"OpenRouterResponse(text='{self.text[:50]}...')"
+
+                return OpenRouterResponse(data)
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logger.error(f"OpenRouter rate limit exceeded after {max_retries} retries. Giving up.")
+                        raise
+                    wait_time = backoff_base * (2 ** (retry_count - 1))
+                    logger.warning(f"OpenRouter rate limited (429). Retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"OpenRouter request failed: {e}")
+                raise
 
     @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
         retry=retry_if_exception_type((ClientError, httpx.HTTPStatusError)),
         reraise=True
     )
@@ -309,21 +417,24 @@ class GeminiClient:
         )
 
     def generate_structured_output(self, model: str, prompt: str, schema: Dict, tools: Optional[list] = None) -> Optional[Any]:
-        """Generate content expected to match a specific JSON schema with model fallback."""
+        """Generate content expected to match a specific JSON schema with model fallback and graceful degradation.
+
+        If all models fail, sleeps for 5 minutes before raising, allowing the system to recover from rate limits.
+        """
         # Primary model list with fallback options
         model_fallback_order = [model, "gemini-2.0-flash", "gemini-1.5-flash"]
-        
+
         # Build config - avoid thinking_level for models that don't support it
         config_params = {
             "response_mime_type": "application/json",
             "response_json_schema": schema,
             "temperature": 1.0
         }
-        
+
         # Only add tools if provided (avoid None value)
         if tools is not None:
             config_params["tools"] = tools
-        
+
         # Avoid thinking_level parameter for models that don't support it (gemini-2.0-flash)
         # Models that support thinking_level: gemini-2.0-flash-thinking-exp, gemini-2.5-pro
         models_with_thinking = [
@@ -333,12 +444,12 @@ class GeminiClient:
             "gemini-3-pro",
             "gemini-3-pro-preview"
         ]
-        
+
         if any(thinking_model in model for thinking_model in models_with_thinking):
             config_params["thinking_level"] = "medium"
-        
+
         config = types.GenerateContentConfig(**config_params)
-        
+
         # Try each model in fallback order
         for attempt_model in model_fallback_order:
             try:
@@ -350,8 +461,12 @@ class GeminiClient:
             except Exception as e:
                 logger.warning(f"⚠️ Model {attempt_model} failed: {e}")
                 continue
-        
+
+        # All models failed - implement graceful degradation
         logger.error(f"❌ All models failed for structured output generation")
+        logger.info("⏳ Sleeping for 5 minutes to allow API recovery, then will retry...")
+        time.sleep(300)  # Sleep 5 minutes
+        logger.info("⏱️ Sleep period complete. Returning None to allow graceful failure.")
         return None
 
     def generate_image_openrouter(

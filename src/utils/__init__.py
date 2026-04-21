@@ -37,12 +37,72 @@ def parse_json_lenient(text: str) -> dict:
     end = t.rfind("}")
     if start != -1 and end != -1 and end > start:
         return json.loads(t[start:end + 1])
-    # Re-raise original error with a snippet for diagnosis
+    # Fallback 2: parse KEY: value text format (Z.AI GLM-5.1 returns this
+    # despite structured-output request — prompt template in seo_system.py
+    # demonstrates the KV layout, so the model reproduces it)
+    kv = _parse_kv_seo_text(text)
+    if kv and kv.get("seo_title") and kv.get("content"):
+        return kv
+    # Re-raise with diagnostic snippet
     raise json.JSONDecodeError(
         f"Failed to parse JSON; leading 200 chars: {text[:200]!r}",
         text,
         0,
     )
+
+
+def _parse_kv_seo_text(text: str) -> dict:
+    """Parse KEY: value text format that Z.AI GLM-5.1 returns.
+
+    Format:
+        SEO_TITLE: ...
+        META_DESCRIPTION: ...
+        FOCUS_KEYWORD: ...
+        EXCERPT: ...
+        SUGGESTED_CATEGORIES: a, b, c
+        SUGGESTED_TAGS: a, b, c
+        <h1>Content...</h1>
+        <p>...</p>
+    """
+    result: dict = {}
+    lines = text.split("\n")
+    content_start = len(lines)
+    field_map = {
+        "SEO_TITLE": "seo_title",
+        "META_DESCRIPTION": "meta_description",
+        "FOCUS_KEYWORD": "focus_keyword",
+        "EXCERPT": "excerpt",
+        "IMAGE_PROMPT": "image_prompt",
+        "SUGGESTED_CATEGORIES": "suggested_categories",
+        "SUGGESTED_TAGS": "suggested_tags",
+        "CATEGORIES": "suggested_categories",
+        "TAGS": "suggested_tags",
+    }
+    list_fields = {"suggested_categories", "suggested_tags"}
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Content starts at first HTML-looking line or markdown heading
+        if stripped.startswith("<h1") or stripped.startswith("<p") or stripped.startswith("# "):
+            content_start = i
+            break
+        # Match KEY: value
+        m = re.match(r"^([A-Z_]+)\s*:\s*(.*)$", line)
+        if m:
+            key_upper = m.group(1)
+            val = m.group(2).strip().strip('"').strip("'").strip("[]")
+            snake = field_map.get(key_upper)
+            if snake:
+                if snake in list_fields:
+                    result[snake] = [v.strip() for v in val.split(",") if v.strip()]
+                else:
+                    result[snake] = val
+    # Grab content block
+    if content_start < len(lines):
+        result["content"] = "\n".join(lines[content_start:]).strip()
+    # Ensure list fields exist (Pydantic may require them)
+    result.setdefault("suggested_categories", [])
+    result.setdefault("suggested_tags", [])
+    return result
 
 # ---------------------------------------------------------------------------
 # Field alias mapping: common AI-generated key names → canonical snake_case

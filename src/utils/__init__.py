@@ -2,7 +2,47 @@
 Utility functions for the Auto-Blogger-WP project.
 """
 
+import json
 import re
+
+
+def parse_json_lenient(text: str) -> dict:
+    """Parse JSON from LLM output, tolerating markdown fences and leading/trailing noise.
+
+    Z.AI GLM-5.1 (and most LLMs) sometimes wrap JSON in ```json ... ``` fences
+    despite schema instructions. This helper strips fences, trims whitespace,
+    and falls back to extracting the first {...} block if direct parse fails.
+    """
+    if text is None:
+        raise ValueError("response text is None")
+    t = text.strip()
+    if not t:
+        raise ValueError("response text is empty")
+    # Strip ```json / ``` fences
+    if t.startswith("```"):
+        t = t[3:]
+        if t.lower().startswith("json"):
+            t = t[4:]
+        t = t.lstrip("\r\n")
+        if t.endswith("```"):
+            t = t[:-3]
+        t = t.rstrip()
+    # First pass
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        pass
+    # Fallback: first {...} block
+    start = t.find("{")
+    end = t.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(t[start:end + 1])
+    # Re-raise original error with a snippet for diagnosis
+    raise json.JSONDecodeError(
+        f"Failed to parse JSON; leading 200 chars: {text[:200]!r}",
+        text,
+        0,
+    )
 
 # ---------------------------------------------------------------------------
 # Field alias mapping: common AI-generated key names → canonical snake_case

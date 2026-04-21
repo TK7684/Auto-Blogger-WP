@@ -22,7 +22,7 @@ from src.clients.gemini import GeminiClient
 from src.clients.wordpress import WordPressClient
 from src.yoast_seo import YoastSEOIntegrator
 from src.utils.linking import resolve_internal_links, clean_remaining_placeholders
-from src.utils import normalize_dict_keys
+from src.utils import normalize_dict_keys, parse_json_lenient
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -170,7 +170,7 @@ def run_content_generation(components: Dict, mode: str = "daily", manual_topic: 
             logger.error("Failed to generate content.")
             return
 
-        result = json.loads(response.text)
+        result = parse_json_lenient(response.text)  # Strips ```json fences + handles trailing/leading noise
         result = normalize_dict_keys(result)  # Normalize uppercase/MixedCase keys → snake_case
         meta = SEOArticleMetadata.model_validate(result)  # Type-safe validation
 

@@ -5,6 +5,8 @@ __pycache__/
 test_output.log
 *.json
 .envrc
+.venv/
+venv/
 
 # Debug files
 tools/env_check.txt

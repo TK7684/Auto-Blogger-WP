@@ -1,31 +1,17 @@
 """
-Entry point for Auto-Blogging System.
-Delegates to src.main.
+Thin entry shim. All logic lives in src/main.py.
+
+Preferred invocation:
+    python -m src.main publish --cadence daily --type trending
+    python -m src.scheduler               # long-lived daemon
+
+Legacy shim (this file) kept so older cron/PM2 configs still work:
+    python main.py daily
+    python main.py weekly
+    python main.py maintenance 20
 """
 import sys
-import os
-
-# Add the current directory to python path
-sys.path.append(os.getcwd())
-
-from src.main import initialize_system, run_content_generation, run_maintenance
+from src.main import main
 
 if __name__ == "__main__":
-    system = initialize_system()
-    if system:
-        if len(sys.argv) > 1:
-            command = sys.argv[1]
-            
-            if command == "maintenance":
-                limit = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-                run_maintenance(system, limit=limit)
-            elif command == "weekly":
-                run_content_generation(system, mode="weekly")
-            elif command == "daily":
-                run_content_generation(system, mode="daily")
-            else:
-                # Assume manual topic
-                run_content_generation(system, mode="manual", manual_topic=command)
-        else:
-            # Default behavior (Daily)
-            run_content_generation(system, mode="daily")
+    sys.exit(main(sys.argv[1:]))

@@ -314,6 +314,14 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     final_content = resolve_internal_links(final_content, existing)
     final_content = clean_remaining_placeholders(final_content)
 
+    # 5b. AFFILIATE CTA — appended after internal-link resolution so the card HTML
+    # is preserved verbatim. No-op when SHOPEE_AFFILIATE_ID is unset.
+    try:
+        from src.affiliate_inserter import insert_shopee_card
+        final_content = insert_shopee_card(final_content, topic)
+    except Exception as e:
+        logger.warning(f"Affiliate inserter failed (non-blocking): {e}")
+
     slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:80]
     post_url = f"{SITE_URL}/{slug}"
     schema_markup = schema.generate_article_schema(

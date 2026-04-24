@@ -89,20 +89,27 @@ SHOPEE_SELECTORS = {
 }
 
 
-# Default keyword seeds — from research doc. These become search URLs that
-# Shopee Custom Link tool wraps into tracked short links.
+# Default keyword seeds — SEO-validated 2026-04-24 via Google autocomplete API
+# (suggestqueries.google.com). All score ≥8 "autocomplete suggestion count"
+# indicating Thai search demand. Category-diversified for pedpro women 30-45
+# lifestyle/fashion audience. Re-validate with tools/seo_keyword_validator.py
+# before adding new seeds.
 DEFAULT_KEYWORDS = [
+    # Universal exit CTA — generic Shopee homepage tracked
     ("universal", "https://shopee.co.th/"),
-    ("เสื้อยืดผู้หญิง", "https://shopee.co.th/search?keyword=%E0%B9%80%E0%B8%AA%E0%B8%B7%E0%B9%89%E0%B8%AD%E0%B8%A2%E0%B8%B7%E0%B8%94%E0%B8%9C%E0%B8%B9%E0%B9%89%E0%B8%AB%E0%B8%8D%E0%B8%B4%E0%B8%87"),
-    ("กระโปรงแฟชั่น", "https://shopee.co.th/search?keyword=%E0%B8%81%E0%B8%A3%E0%B8%B0%E0%B9%82%E0%B8%9B%E0%B8%A3%E0%B8%87%E0%B9%81%E0%B8%9F%E0%B8%8A%E0%B8%B1%E0%B9%88%E0%B8%99"),
-    ("แมสค์บำรุงผิว", "https://shopee.co.th/search?keyword=%E0%B9%81%E0%B8%A1%E0%B8%AA%E0%B8%84%E0%B9%8C%E0%B8%9A%E0%B8%B3%E0%B8%A3%E0%B8%B8%E0%B8%87%E0%B8%9C%E0%B8%B4%E0%B8%A7"),
-    ("กระเป๋าสะพาย", "https://shopee.co.th/search?keyword=%E0%B8%81%E0%B8%A3%E0%B8%B0%E0%B9%80%E0%B8%9B%E0%B9%8B%E0%B8%B2%E0%B8%AA%E0%B8%B0%E0%B8%9E%E0%B8%B2%E0%B8%A2"),
-    ("เดรสสตรี", "https://shopee.co.th/search?keyword=%E0%B9%80%E0%B8%94%E0%B8%A3%E0%B8%AA%E0%B8%AA%E0%B8%95%E0%B8%A3%E0%B8%B5"),
-    ("เซรั่มลดริ้วรอย", f"https://shopee.co.th/search?keyword={quote('เซรั่มลดริ้วรอย')}"),
-    ("ครีมกันแดด", f"https://shopee.co.th/search?keyword={quote('ครีมกันแดด')}"),
-    ("รองเท้าผ้าใบผู้หญิง", f"https://shopee.co.th/search?keyword={quote('รองเท้าผ้าใบผู้หญิง')}"),
-    ("กางเกงยีนส์เอวสูง", f"https://shopee.co.th/search?keyword={quote('กางเกงยีนส์เอวสูง')}"),
-    ("ชุดเดรสวินเทจ", f"https://shopee.co.th/search?keyword={quote('ชุดเดรสวินเทจ')}"),
+    # Fashion — 4 keywords, niche-aligned (vintage emphasis matches pedpro)
+    ("ชุดวินเทจ",                       f"https://shopee.co.th/search?keyword={quote('ชุดวินเทจ')}"),          # perfect niche
+    ("เสื้อวินเทจ",                     f"https://shopee.co.th/search?keyword={quote('เสื้อวินเทจ')}"),        # perfect niche
+    ("ชุดเดรสออกงาน",                   f"https://shopee.co.th/search?keyword={quote('ชุดเดรสออกงาน')}"),      # occasion intent
+    ("เสื้อยืดผู้หญิง",                 f"https://shopee.co.th/search?keyword={quote('เสื้อยืดผู้หญิง')}"),    # evergreen
+    # Beauty — 3 keywords, high mid-life women relevance
+    ("เซรั่มวิตามินซี",                 f"https://shopee.co.th/search?keyword={quote('เซรั่มวิตามินซี')}"),    # mid-life skincare
+    ("มาส์กหน้า",                       f"https://shopee.co.th/search?keyword={quote('มาส์กหน้า')}"),          # skincare mask
+    ("ครีมกันแดด",                      f"https://shopee.co.th/search?keyword={quote('ครีมกันแดด')}"),         # sunscreen
+    # Accessories — 3 keywords, all score 10
+    ("กระเป๋าสะพาย",                    f"https://shopee.co.th/search?keyword={quote('กระเป๋าสะพาย')}"),       # shoulder bag
+    ("กระเป๋าสตางค์ผู้หญิง",            f"https://shopee.co.th/search?keyword={quote('กระเป๋าสตางค์ผู้หญิง')}"), # wallet
+    ("รองเท้าผ้าใบผู้หญิง ใส่สบาย",     f"https://shopee.co.th/search?keyword={quote('รองเท้าผ้าใบผู้หญิง ใส่สบาย')}"),  # long-tail comfort intent
 ]
 
 

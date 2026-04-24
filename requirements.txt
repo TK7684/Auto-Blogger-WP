@@ -29,3 +29,9 @@ openai>=1.0.0
 # HTTP client for OpenRouter integration
 httpx>=0.27.0
 tenacity>=8.0.0
+
+# LiteLLM provider abstraction (optional — activate via LITELLM_MODEL env)
+# Unlocks SiliconFlow / Ollama / DeepSeek / Anthropic / 100+ providers through
+# a single OpenAI-compatible interface. See project_trendradar-learn.md +
+# reference_llm-cost-reduction-options.md for the adoption rationale.
+litellm>=1.50.0

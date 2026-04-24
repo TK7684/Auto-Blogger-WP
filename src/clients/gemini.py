@@ -49,15 +49,9 @@ class GeminiClient:
         self.service_account_file = service_account_file or os.environ.get("GEMINI_SERVICE_ACCOUNT_KEY_FILE")
         self.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
         self.zai_api_key = os.environ.get("ZAI_API_KEY")
-        # LiteLLM escape hatch: if LITELLM_MODEL is set, route through litellm.completion()
-        # — unlocks SiliconFlow / Ollama / DeepSeek / Anthropic / 100+ providers via one
-        # OpenAI-compatible interface. Adoption rationale in
-        # reference_llm-cost-reduction-options.md (2026-04-21).
-        self.litellm_model = os.environ.get("LITELLM_MODEL")
         self._using_vertexai = False
         self._using_openrouter = False
         self._using_zai = False
-        self._using_litellm = False
         self._current_region_index = 0
         self._credentials = None
         self._project_id = None
@@ -66,26 +60,31 @@ class GeminiClient:
     def _initialize_client(self) -> Optional[genai.Client]:
         """Initialize the GenAI client with preferred authentication.
 
-        Priority (updated 2026-04-24 — Z.AI demoted after 449 timeouts in 24h):
-        1. Google AI API direct (if GEMINI_API_KEY is set) — FASTEST, FREE tier available
-        2. Vertex AI (if service account file exists)
-        3. OpenRouter (if OPENROUTER_API_KEY is set)
-        4. LiteLLM (if LITELLM_MODEL is set — SiliconFlow/Ollama/DeepSeek/etc.)
-        5. Z.AI (GLM) — LAST RESORT (reliability issues observed 2026-04)
+        Priority:
+        1. Z.AI (GLM) (if ZAI_API_KEY is set)
+        2. OpenRouter (if OPENROUTER_API_KEY is set)
+        3. Vertex AI (if service account file exists)
+        4. Google AI API (if GEMINI_API_KEY is set)
         """
         try:
-            # 1. Google AI API direct — preferred when key is present
-            if self.api_key:
-                logger.info("Initializing Gemini with Google AI API key (primary)")
-                self._using_vertexai = False
-                return genai.Client(api_key=self.api_key)
+            # 1. Check for Z.AI (GLM) first
+            if self.zai_api_key:
+                logger.info("Initializing with Z.AI (GLM) backend")
+                self._using_zai = True
+                return None  # No genai.Client needed for Z.AI
 
-            # 2. Vertex AI service account (regional rotation enabled)
+            # 2. Check for OpenRouter
+            if self.openrouter_api_key:
+                logger.info("Initializing Gemini with OpenRouter backend")
+                self._using_openrouter = True
+                return None  # No genai.Client needed for OpenRouter
+
+            # 3. Check for Vertex AI service account
             if self.service_account_file:
                 resolved_path = Path(self.service_account_file).resolve()
                 if resolved_path.exists():
                     import google.oauth2.service_account as sa
-                    logger.info(f"Initializing Gemini with Vertex AI service account: {resolved_path}")
+                    logger.info(f"Initializing Gemini with service account (region rotation enabled): {resolved_path}")
                     self._credentials = sa.Credentials.from_service_account_file(
                         str(resolved_path),
                         scopes=['https://www.googleapis.com/auth/cloud-platform']
@@ -96,30 +95,13 @@ class GeminiClient:
                 else:
                     logger.warning(f"Service account file not found: {resolved_path}")
 
-            # 3. OpenRouter — pay-per-token access to 100+ models
-            if self.openrouter_api_key:
-                logger.info("Initializing Gemini with OpenRouter backend")
-                self._using_openrouter = True
-                return None
+            # 4. Fallback to API key
+            if self.api_key:
+                logger.info("Initializing Gemini with API key")
+                self._using_vertexai = False
+                return genai.Client(api_key=self.api_key)
 
-            # 4. LiteLLM — provider abstraction (SiliconFlow, Ollama, DeepSeek, ...)
-            if self.litellm_model:
-                try:
-                    import litellm  # noqa: F401 — import-check only
-                    logger.info(f"Initializing with LiteLLM backend (model={self.litellm_model})")
-                    self._using_litellm = True
-                    return None
-                except ImportError:
-                    logger.warning("LITELLM_MODEL set but `litellm` not installed")
-
-            # 5. Z.AI (GLM) — LAST RESORT after 2026-04-24 reliability incident
-            # (observed 449 timeouts in 24h, 0 successful publishes)
-            if self.zai_api_key:
-                logger.warning("Falling back to Z.AI (GLM) — other providers unavailable; may timeout")
-                self._using_zai = True
-                return None
-
-            logger.error("No valid credentials found in priority chain")
+            logger.error("No valid credentials found")
         except Exception as e:
             logger.error(f"Error initializing client: {e}")
         return None
@@ -152,10 +134,6 @@ class GeminiClient:
     def is_using_openrouter(self) -> bool:
         """Check if the client is using OpenRouter backend."""
         return self._using_openrouter
-
-    def is_using_litellm(self) -> bool:
-        """Check if the client is using LiteLLM backend."""
-        return self._using_litellm
 
     def is_using_zai(self) -> bool:
         """Check if the client is using Z.AI (GLM) backend."""
@@ -243,7 +221,7 @@ class GeminiClient:
             try:
                 _last_zai_request_time = time.time()
                 # glm-5.1 is a reasoning model — long outputs exceed 120s. 300s is safer.
-                with httpx.Client(timeout=45.0) as http_client:
+                with httpx.Client(timeout=300.0) as http_client:
                     response = http_client.post(
                         "https://api.z.ai/api/coding/paas/v4/chat/completions",
                         headers=headers,
@@ -414,73 +392,6 @@ class GeminiClient:
                 logger.error(f"OpenRouter request failed: {e}")
                 raise
 
-    def _generate_litellm_content(self, _model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:
-        """Route the request through LiteLLM's provider-agnostic completion API.
-
-        `LITELLM_MODEL` is the source of truth for which provider/model to hit
-        (e.g. `siliconflow/deepseek-v3`, `ollama/llama3`, `openrouter/anthropic/claude-opus-4-7`).
-        The `_model` arg is ignored — LITELLM_MODEL wins to keep provider swaps
-        one-env-var away from any caller code.
-
-        Returns an object with a `.text` attribute mimicking the genai response
-        shape (same contract used by _generate_zai_content and _generate_openrouter_content).
-        Applies the same GLM-5.1 fence-stripper since many Chinese models wrap
-        JSON responses in ```json ... ``` blocks.
-        """
-        import litellm  # deferred import — only runs when this backend is active
-
-        # Build OpenAI-style messages (same shape as OpenRouter path)
-        messages: list = []
-        if isinstance(contents, str):
-            messages = [{"role": "user", "content": contents}]
-        elif isinstance(contents, list):
-            for item in contents:
-                if isinstance(item, str):
-                    messages.append({"role": "user", "content": item})
-                elif hasattr(item, "text"):
-                    messages.append({"role": "user", "content": item.text})
-                elif isinstance(item, dict):
-                    messages.append(item)
-        else:
-            messages = [{"role": "user", "content": str(contents)}]
-
-        kwargs: Dict[str, Any] = {"model": self.litellm_model, "messages": messages}
-
-        if config:
-            if hasattr(config, "temperature") and config.temperature is not None:
-                kwargs["temperature"] = config.temperature
-            if hasattr(config, "response_json_schema") and config.response_json_schema is not None:
-                kwargs["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {"name": "response_schema", "schema": config.response_json_schema, "strict": True},
-                }
-            elif hasattr(config, "response_mime_type") and config.response_mime_type == "application/json":
-                kwargs["response_format"] = {"type": "json_object"}
-
-        logger.info(f"Calling LiteLLM (model={self.litellm_model})")
-        response = litellm.completion(**kwargs)
-
-        content = response.choices[0].message.content or ""
-        stripped = content.strip()
-        # Fence-stripper: GLM-5.1 and some Chinese models wrap JSON in ```json ... ``` fences
-        # even under strict schema. Preserve the same stripping as the Z.AI path.
-        if stripped.startswith("```"):
-            stripped = stripped.split("\n", 1)[1] if "\n" in stripped else stripped[3:]
-            if stripped.endswith("```"):
-                stripped = stripped[:-3].rstrip()
-            if stripped.lstrip().lower().startswith("json\n"):
-                stripped = stripped.lstrip()[5:]
-
-        class LiteLLMResponse:
-            def __init__(self, text: str):
-                self.text = text
-
-            def __repr__(self):
-                preview = self.text[:50].replace("\n", " ")
-                return f"LiteLLMResponse(text='{preview}...')"
-
-        return LiteLLMResponse(stripped)
-
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
@@ -494,9 +405,6 @@ class GeminiClient:
 
         if self._using_openrouter:
             return self._generate_openrouter_content(model, contents, config)
-
-        if self._using_litellm:
-            return self._generate_litellm_content(model, contents, config)
 
         if not self.client:
             raise RuntimeError("Client not initialized")

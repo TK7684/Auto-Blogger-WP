@@ -221,7 +221,7 @@ class GeminiClient:
             try:
                 _last_zai_request_time = time.time()
                 # glm-5.1 is a reasoning model — long outputs exceed 120s. 300s is safer.
-                with httpx.Client(timeout=45.0) as http_client:
+                with httpx.Client(timeout=300.0) as http_client:
                     response = http_client.post(
                         "https://api.z.ai/api/coding/paas/v4/chat/completions",
                         headers=headers,

@@ -229,8 +229,15 @@ def _media_source_url(uploader: WordPressMediaUploader, media_id: int) -> Option
 
 def run_content_generation(components: Dict, cadence: str = "daily",
                            article_type: Optional[str] = None,
-                           manual_topic: Optional[str] = None) -> Optional[int]:
-    """Generate and publish one post. Returns the WP post ID or None on failure."""
+                           manual_topic: Optional[str] = None,
+                           dry_run: bool = False) -> Optional[int]:
+    """Generate and publish one post. Returns the WP post ID or None on failure.
+
+    When ``dry_run`` is True, runs steps 1-2 (topic pick + LLM content generation)
+    only — image gen, internal-link resolution, schema injection, WP create_post,
+    Yoast meta, Discord notify, and post-publish verify are all skipped. Returns
+    ``-1`` as a non-None success sentinel so the caller treats it as success.
+    """
     wp = components["wp"]
     gemini = components["gemini"]
     image_gen = components["image"]
@@ -275,6 +282,17 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     except Exception as e:
         logger.error(f"❌ Content generation failed: {e}")
         return None
+
+    # DRY-RUN GATE — bail out after LLM call so we can verify backend changes
+    # (e.g. Gemini/Z.AI timeout fixes) without writing to the live site.
+    if dry_run:
+        slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:80]
+        logger.info(
+            f"🟡 DRY RUN: would publish {meta.seo_title!r} "
+            f"(focus={meta.focus_keyword!r}, slug={slug!r}); "
+            f"skipping image gen, WP create_post, Yoast, Discord, verify."
+        )
+        return -1
 
     # 3. HERO IMAGE
     featured_image_id = None
@@ -442,6 +460,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     pub.add_argument("--type", choices=["trending", "research"], default=None,
                      help="Force article type; default mixes by cadence")
     pub.add_argument("--topic", default=None, help="Manual topic override")
+    pub.add_argument("--dry-run", action="store_true",
+                     help="Run topic + LLM only; skip image gen, WP publish, Yoast, Discord, verify")
 
     mnt = sub.add_parser("maintenance")
     mnt.add_argument("limit", type=int, nargs="?", default=10)
@@ -455,8 +475,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif argv[0] in ("publish", "maintenance", "fix-links"):
         args = ap.parse_args(argv)
     else:
-        # Legacy: first arg is a manual topic
-        args = ap.parse_args(["publish", "--topic", argv[0]])
+        # Legacy: first arg is a manual topic. Preserve --dry-run if present in tail.
+        legacy = ["publish", "--topic", argv[0]]
+        if "--dry-run" in argv[1:]:
+            legacy.append("--dry-run")
+        args = ap.parse_args(legacy)
 
     system = initialize_system()
     if not system:
@@ -474,6 +497,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         cadence=getattr(args, "cadence", "daily"),
         article_type=getattr(args, "type", None),
         manual_topic=getattr(args, "topic", None),
+        dry_run=getattr(args, "dry_run", False),
     )
     return 0 if post_id else 1
 

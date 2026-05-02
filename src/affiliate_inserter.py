@@ -256,17 +256,39 @@ def _render_dynamic_card(topic: str, products: list[dict], search_url: str) -> s
 def _try_fetch_products(topic: str, limit: int = 3) -> list[dict]:
     """Attempt to pull products from the Shopee API. Return [] on any failure.
 
-    Isolated in a try-everywhere wrapper so a misconfigured API / network issue
-    can never block publishing. Import is lazy so the inserter module remains
-    importable even if src.clients.shopee has an init-time error.
+    Resolution order:
+      1. Live Shopee Affiliate API (requires SHOPEE_APP_ID + SHOPEE_APP_SECRET).
+      2. Curated fallback cache (data/shopee_products.json) — 250 vetted Thai
+         products with real `s.shopee.co.th/...` attribution short links.
+
+    The curated fallback ensures every published post inserts a card with
+    `products>0` even when API credentials are missing/expired/rate-limited.
+    Imports are lazy so this module stays importable on init-time errors.
     """
+    # 1) Try the live Shopee API first — if creds work, real-time data is best.
     try:
         from src.clients import shopee  # lazy import — isolates import errors
         products = shopee.search_products(topic, limit=limit)
-        return products or []
+        if products:
+            return products
     except Exception as e:
         logger.info(f"[affiliate] shopee.search_products unavailable: {e}")
-        return []
+
+    # 2) Fall back to the curated cache. Same offerLink format (s.shopee.co.th
+    # short links → trackable attribution) so commission still flows.
+    try:
+        from src.clients import shopee_curated  # lazy import
+        curated = shopee_curated.search(topic, limit=limit)
+        if curated:
+            logger.info(
+                f"[affiliate] using curated cache fallback "
+                f"({len(curated)}/{shopee_curated.cache_size()} products)"
+            )
+            return curated
+    except Exception as e:
+        logger.info(f"[affiliate] curated fallback unavailable: {e}")
+
+    return []
 
 
 def insert_shopee_card(content: str, topic: str) -> str:
@@ -302,7 +324,11 @@ def insert_shopee_card(content: str, topic: str) -> str:
         search_url = _build_search_url(topic_clean, affiliate_id or "")
         products = _try_fetch_products(topic_clean, limit=3)
 
-        if products and affiliate_id:
+        # DYNAMIC card is preferred whenever we have products — each product
+        # ships its own offerLink (already affiliate-tracked), so attribution
+        # works even without SHOPEE_AFFILIATE_ID. The id is only used for the
+        # secondary "see more" search CTA.
+        if products:
             primary_card = _render_dynamic_card(topic_clean, products, search_url)
             mode = "DYNAMIC"
         elif affiliate_id:

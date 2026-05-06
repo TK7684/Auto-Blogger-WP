@@ -616,10 +616,10 @@ Return ONLY the image prompt, no explanation."""
         return prompt
 
     def generate_image_comfyui(self, prompt: str) -> Optional[bytes]:
-        """Generate image using ComfyUI (local SDXL workflow).
+        """Generate image using ComfyUI (Flux Dev FP8 workflow).
 
         Requires ComfyUI running on COMFYUI_URL (default: http://127.0.0.1:8188).
-        Uses a simple SDXL txt2img workflow.
+        Uses flux1-dev-fp8 for higher quality images than SDXL.
 
         Args:
             prompt: Image description
@@ -641,44 +641,54 @@ Return ONLY the image prompt, no explanation."""
             logger.warning(f"ComfyUI not available at {self.comfyui_url}: {e}")
             return None
 
-        # Build SDXL txt2img workflow
+        # Build Flux Dev FP8 txt2img workflow
+        checkpoint = os.environ.get("COMFYUI_CHECKPOINT", "flux1-dev-fp8.safetensors")
         workflow = {
             "1": {
                 "inputs": {
-                    "ckpt_name": "sd_xl_base_1.0.safetensors"  # Common SDXL checkpoint
+                    "unet_name": checkpoint,
+                    "weight_dtype": "fp8_e4m3fn"
                 },
-                "class_type": "CheckpointLoaderSimple"
+                "class_type": "UNETLoader"
             },
             "2": {
                 "inputs": {
-                    "text": prompt,
-                    "clip": ["1", 1]
+                    "clip_name1": "t5xxl_fp16.safetensors",
+                    "clip_name2": "clip_l.safetensors",
+                    "type": "flux"
                 },
-                "class_type": "CLIPTextEncode"
+                "class_type": "DualCLIPLoader"
             },
             "3": {
                 "inputs": {
-                    "text": "",  # Negative prompt
-                    "clip": ["1", 1]
+                    "text": prompt,
+                    "clip": ["2", 0]
                 },
                 "class_type": "CLIPTextEncode"
             },
             "4": {
                 "inputs": {
+                    "guidance": 3.5,
+                    "conditioning": ["3", 0]
+                },
+                "class_type": "FluxGuidance"
+            },
+            "5": {
+                "inputs": {
                     "seed": int(uuid.uuid4().int % (2**32)),
                     "steps": 20,
-                    "cfg": 7.0,
+                    "cfg": 1.0,
                     "sampler_name": "euler",
                     "scheduler": "normal",
                     "denoise": 1.0,
                     "model": ["1", 0],
-                    "positive": ["2", 0],
+                    "positive": ["4", 0],
                     "negative": ["3", 0],
-                    "latent_image": ["5", 0]
+                    "latent_image": ["6", 0]
                 },
                 "class_type": "KSampler"
             },
-            "5": {
+            "6": {
                 "inputs": {
                     "width": 1024,
                     "height": 1024,
@@ -686,17 +696,23 @@ Return ONLY the image prompt, no explanation."""
                 },
                 "class_type": "EmptyLatentImage"
             },
-            "6": {
+            "7": {
                 "inputs": {
-                    "samples": ["4", 0],
-                    "vae": ["1", 2]
+                    "vae_name": "ae.safetensors"
+                },
+                "class_type": "VAELoader"
+            },
+            "8": {
+                "inputs": {
+                    "samples": ["5", 0],
+                    "vae": ["7", 0]
                 },
                 "class_type": "VAEDecode"
             },
-            "7": {
+            "9": {
                 "inputs": {
                     "filename_prefix": "auto_blogger",
-                    "images": ["6", 0]
+                    "images": ["8", 0]
                 },
                 "class_type": "SaveImage"
             }

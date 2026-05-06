@@ -57,8 +57,7 @@ _CACHE: Optional[list[dict]] = None
 _TOKEN_RE = re.compile(r"[A-Za-z0-9฀-๿]+")
 
 # English stopwords commonly found in trending topics that shouldn't drive
-# product matching. Thai stopwords intentionally omitted — Thai search benefits
-# from preserving particles since the productName tokenization is sparse.
+# product matching.
 _STOPWORDS = frozenset(
     {
         "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to",
@@ -70,8 +69,35 @@ _STOPWORDS = frozenset(
         "all", "any", "both", "each", "few", "more", "most", "other", "some",
         "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too",
         "very", "just", "as", "if", "viral", "trending", "news", "today",
+        # Thai stopwords — common particles/connectors that pollute matching
+        "และ", "หรือ", "แต่", "ของ", "ใน", "บน", "ที่", "ไป", "มา", "กับ",
+        "โดย", "จาก", "คือ", "มี", "เป็น", "ได้", "ให้", "ไม่", "จะ", "ก็",
+        "แล้ว", "นี้", "นั้น", "เหล่า", "ทุก", "เพื่อ", "เกี่ยว", "วิธี",
+        "เรื่อง", "เกี่ยวกับ", "สำหรับ", "อย่าง", "มาก", "เรา", "คุณ",
+        "เขา", "เธอ", "ฉัน", "พวก", "อะไร", "อย่างไร", "ทำไม", "เมื่อไหร่",
     }
 )
+
+# Topic-to-product-category mapping for relevance boosting.
+# When the topic contains these keywords, products with matching name tokens
+# get a relevance bonus on top of token overlap.
+_RELEVANCE_KEYWORDS = {
+    # Fashion / clothing
+    "แฟชั่น": 2.0, "เสื้อ": 2.0, "กระโปรง": 2.0, "กางเกง": 2.0,
+    "ชุด": 2.0, "สไตล์": 1.5, "แต่ง": 1.5, "สวย": 1.5, "แม่": 1.3,
+    "ผู้หญิง": 1.5, "ผ้า": 1.3, "นุ่ม": 1.2, "ไหม": 1.3,
+    # Lifestyle / home
+    "บ้าน": 1.3, "ห้อง": 1.2, "ตกแต่ง": 1.5, "อยู่อาศัย": 1.3,
+    "ครัว": 1.3, "จัดเก็บ": 1.5, "ทำความสะอาด": 1.3,
+    # Beauty / health
+    "ผิว": 1.5, "หน้า": 1.3, "บำรุง": 1.5, "สกินแคร์": 2.0,
+    "ความงาม": 1.5, "หน้าใส": 1.3, "มาส์ก": 1.5, "น้ำหอม": 1.5,
+    # Pet (pedpro = pet professional)
+    "สุนัข": 2.0, "แมว": 2.0, "สัตว์เลี้ยง": 2.0, "น้องหมา": 2.0,
+    "น้องแมว": 2.0, "อาหารสัตว์": 2.0, "ที่นอนสุนัข": 2.0,
+    # Tech / gadgets
+    "ชาร์จ": 1.3, "หูฟัง": 1.3, "แก็ดเจ็ต": 1.3, "มือถือ": 1.3,
+}
 
 
 def _load() -> list[dict]:
@@ -131,10 +157,10 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
 
     Matching:
       1. Token-overlap between keyword tokens and productName tokens — primary key.
-      2. value_score (commission × sales) — tiebreak / fallback when no overlap.
+      2. Relevance bonus from _RELEVANCE_KEYWORDS matching keyword tokens.
+      3. value_score (commission × sales) — tiebreak / fallback when no overlap.
 
-    Always returns at most `limit` products and never raises. If the cache is
-    empty (file missing or corrupt), returns [].
+    Always returns at most `limit` products and never raises.
     """
     products = _load()
     if not products:
@@ -144,15 +170,33 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
         return []
 
     kw_tokens = _tokenize(keyword)
+    kw_lower = keyword.lower()
 
-    scored: list[tuple[int, float, dict]] = []
+    # Calculate relevance bonus from keyword-level matching
+    relevance_bonus = 0.0
+    for rkw, weight in _RELEVANCE_KEYWORDS.items():
+        if rkw in kw_lower or rkw in kw_tokens:
+            relevance_bonus += weight
+
+    scored: list[tuple[float, float, dict]] = []
     for p in products:
         name_tokens = _tokenize(p.get("productName") or "")
+        name_lower = (p.get("productName") or "").lower()
         overlap = len(kw_tokens & name_tokens) if kw_tokens else 0
-        scored.append((overlap, _value_score(p), p))
 
-    # Sort by overlap DESC, then value DESC. If any product has overlap > 0 we
-    # still backfill from top-by-value so the card always renders `limit` items.
+        # Product-level relevance: check if product name contains relevance keywords
+        product_relevance = 0.0
+        if relevance_bonus > 0:
+            for rkw, weight in _RELEVANCE_KEYWORDS.items():
+                if rkw in name_lower:
+                    product_relevance += weight
+
+        # Combined score: overlap * 3 + min(relevance_bonus, product_relevance)
+        # This rewards products that match both topic tokens AND category keywords
+        category_match = min(relevance_bonus, product_relevance) if relevance_bonus > 0 else 0
+        combined = overlap * 3.0 + category_match
+        scored.append((combined, _value_score(p), p))
+
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
 
     has_match = any(s[0] > 0 for s in scored[:limit])
@@ -160,12 +204,12 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
 
     if has_match:
         logger.debug(
-            "[shopee_curated] keyword=%r matched %d/%d products via token overlap",
+            "[shopee_curated] keyword=%r matched %d/%d products (score>0)",
             keyword, sum(1 for s in scored[:limit] if s[0] > 0), len(selected),
         )
     else:
         logger.debug(
-            "[shopee_curated] keyword=%r no token overlap — using top-by-value",
+            "[shopee_curated] keyword=%r no match — using top-by-value",
             keyword,
         )
 

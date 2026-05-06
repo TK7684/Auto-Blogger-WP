@@ -147,9 +147,9 @@ class GeminiClient:
     # Map quality-tier Gemini models → glm-5.1, fast-tier → glm-5-turbo.
     # Benefits: glm-5-turbo burns less quota → better fallback behavior on rate limits.
     ZAI_MODEL_MAP = {
-        "gemini-2.5-flash": "glm-5.1",       # quality + thinking → flagship
+        "gemini-2.5-flash": "glm-5-turbo",   # was glm-5.1 (flagship) — timed out at 300s on SEO prompts
         "gemini-2.0-flash": "glm-5-turbo",   # general-purpose fast → turbo
-        "gemini-1.5-pro":   "glm-5.1",       # long-context + reasoning → flagship
+        "gemini-1.5-pro":   "glm-5-turbo",   # was glm-5.1 — same timeout risk
         "gemini-1.5-flash": "glm-5-turbo",   # quick, cheap → turbo
     }
 
@@ -213,15 +213,14 @@ class GeminiClient:
             time.sleep(sleep_time)
 
         # Exponential backoff for 429 errors
-        max_retries = 5
+        max_retries = 3
         retry_count = 0
-        backoff_base = 30  # Start at 30 seconds
+        backoff_base = 2   # Start at 2s, cap at 30s
 
         while retry_count < max_retries:
             try:
                 _last_zai_request_time = time.time()
-                # glm-5.1 is a reasoning model — long outputs exceed 120s. 300s is safer.
-                with httpx.Client(timeout=300.0) as http_client:
+                with httpx.Client(timeout=420.0) as http_client:
                     response = http_client.post(
                         "https://api.z.ai/api/coding/paas/v4/chat/completions",
                         headers=headers,
@@ -229,9 +228,9 @@ class GeminiClient:
                     )
 
                     if response.status_code == 429:
-                        # Rate limited - exponential backoff
+                        # Rate limited - exponential backoff (2s → 4s → 8s, capped at 30s)
                         retry_count += 1
-                        wait_time = backoff_base * (2 ** (retry_count - 1))
+                        wait_time = min(backoff_base * (2 ** (retry_count - 1)), 30.0)
                         logger.warning(f"Z.AI rate limited (429). Retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
                         time.sleep(wait_time)
                         continue
@@ -462,11 +461,30 @@ class GeminiClient:
                 logger.warning(f"⚠️ Model {attempt_model} failed: {e}")
                 continue
 
-        # All models failed - implement graceful degradation
+        # All Z.AI models failed — try Google AI API as fallback
+        if self._using_zai and self.api_key:
+            logger.info("🔄 Z.AI failed all models — falling back to Google AI API (Gemini)")
+            try:
+                fallback_client = genai.Client(api_key=self.api_key)
+                for fb_model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+                    try:
+                        logger.info(f"Trying Google AI fallback model: {fb_model}")
+                        response = fallback_client.models.generate_content(
+                            model=fb_model,
+                            contents=prompt,
+                            config=config,
+                        )
+                        if response and response.text:
+                            logger.info(f"✅ Google AI fallback succeeded with {fb_model}")
+                            return response
+                    except Exception as fb_e:
+                        logger.warning(f"Google AI fallback model {fb_model} failed: {fb_e}")
+                        continue
+            except Exception as init_e:
+                logger.error(f"Google AI fallback client init failed: {init_e}")
+
+        # All models failed - return None so scheduler can try next tick
         logger.error(f"❌ All models failed for structured output generation")
-        logger.info("⏳ Sleeping for 5 minutes to allow API recovery, then will retry...")
-        time.sleep(300)  # Sleep 5 minutes
-        logger.info("⏱️ Sleep period complete. Returning None to allow graceful failure.")
         return None
 
     def generate_image_openrouter(

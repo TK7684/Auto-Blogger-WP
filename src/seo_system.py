@@ -87,76 +87,34 @@ class SEOPromptBuilder:
             brand_instruction = "\nSTRICT BRAND GUIDELINES (Must follow for factual accuracy):\n- " + "\n- ".join(brand_facts) + "\n"
 
         prompt = f"""
-You are an expert SEO content writer and journalist. Write a comprehensive blog post about:
+Write an SEO blog post in {language} about:
 
 TOPIC: {topic}
 CONTEXT: {context}
 FOCUS KEYWORD: {focus_keyword}
-LANGUAGE: {language}
 {brand_instruction}
 
-IMPORTANT: Write the entire content (including titles, headings, and body) in {language}. Keep the JSON keys (like SEO_TITLE, IMAGE_PROMPT) in English, but their values must be in {language}.
+IMPORTANT: All content values must be in {language}. JSON keys stay in English.
+Return ONLY valid JSON with ALL these required fields:
+- seo_title: catchy SEO title, max 60 chars
+- meta_description: SEO meta description, max 160 chars, include "{focus_keyword}"
+- focus_keyword: "{focus_keyword}"
+- excerpt: 2-sentence summary
+- content: HTML blog post (H1 heading, 2-3 H2 sections, short paragraphs)
+- suggested_categories: array of 2-3 category names
+- suggested_tags: array of 3-5 tag names
+- image_prompt: description for featured image generation
+- in_article_image_prompts: array of 2 image descriptions for inline images
 
-Requirements:
+CONTENT REQUIREMENTS:
+- HTML format with H1 heading, 2-3 H2 sections, short paragraphs
+- Hook the reader in the first sentence with a surprising fact or question
+- Include "{focus_keyword}" naturally 3-5 times
+- Add [IMAGE_PLACEHOLDER_0] and [IMAGE_PLACEHOLDER_1] between sections
+- Keep content 400-600 words — concise and engaging
+- End with a brief FAQ section (2-3 questions) in schema.org FAQPage format
 
-1. SEO META GENERATION (Start your response with these exact lines):
-```
-SEO_TITLE: [URGENT: Create a massive click-bait style title but professional. MUST grab attention in 3 seconds. Max 60 chars. Use power words. Example: "Why X is Changing Everything", "Stop Doing Y Immediately". Focus Keyword: "{focus_keyword}"]
-META_DESCRIPTION: [155-160 chars. deeply engaging, teases the solution, includes "{focus_keyword}"]
-FOCUS_KEYWORD: {focus_keyword}
-EXCERPT: [2 engaging sentences that force the reader to click 'Read More']
-```
-
-2. CONTENT STRUCTURE (HTML format):
-
-H1: {topic} (or the optimized SEO_TITLE)
-
-IMPORTANT: Use the "google_search" tool to verify ALL facts, statistics, and claims. preventing misinformation is your #1 priority.
-
-INTRO (2-3 very short paragraphs):
-- Hook the reader IMMEDIATELY (in the first 3 seconds of reading).
-- Use a startling fact, a controversial question, or a relatability hook.
-- Include "{focus_keyword}" naturally.
-
-BODY (3-4 H2 sections):
-- H2s must be benefit-driven (e.g., "How to Save Money" vs "Saving Money").
-- Paragraphs must be SHORT (1-2 sentences).
-- Use distinct formatting (bolding, italics, lists) to keep the eye moving.
-- Include internal link placeholders: [INSERT_INTERNAL_LINK:relevant_topic] where relevant_topics should match existing content on your site.
-
-SEO ELEMENTS:
-- Keyword density: 1-2% (natural placement).
-- Use LSI keywords.
-- **IN-ARTICLE IMAGES**: Include `[IMAGE_PLACEHOLDER_0]` and `[IMAGE_PLACEHOLDER_1]` between sections.
-- End with a FAQ section with schema markup.
-
-FAQ SECTION (Schema.org FAQPage format):
-```html
-<div class="schema-faq" itemscope itemtype="https://schema.org/FAQPage">
-  <h2>Frequently Asked Questions About {focus_keyword}</h2>
-  <div itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">
-    <h3 itemprop="name">[Question about {topic}]?</h3>
-    <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">
-      <p itemprop="text">[Detailed, helpful answer verified by search]</p>
-    </div>
-  </div>
-  <!-- 2-3 more FAQs -->
-</div>
-```
-
-LENGTH: 800-1200 words
-
-TONE:
-- High energy, engaging, and authoritative.
-- "You" focused.
-- No fluff. Every sentence must add value.
-- **STRICTLY NO INSTRUCTION KEYWORDS**: Never include 'IMAGE_PROMPT:', 'SEO_TITLE:' in the HTML.
-
-OUTPUT:
-After the content, provide the image generation prompt:
-```
-IMAGE_PROMPT: [Hyper-realistic, captivating image for: {topic}. High contrast, shallow depth of field, 8k resolution, trending on ArtStation.]
-```
+TONE: High energy, authoritative, "you" focused. No fluff.
 """
 
         if competitor_insights:

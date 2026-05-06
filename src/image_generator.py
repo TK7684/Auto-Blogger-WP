@@ -736,9 +736,10 @@ Return ONLY the image prompt, no explanation."""
 
             logger.info(f"Workflow submitted: {prompt_id}")
 
-            # Poll for completion (max 120 seconds)
+            # Poll for completion (max 300 seconds — cold-start model load can take 30-60s)
             start_time = _time.time()
-            while _time.time() - start_time < 120.0:
+            poll_count = 0
+            while _time.time() - start_time < 300.0:
                 try:
                     hist_response = requests.get(
                         f"{self.comfyui_url}/history/{prompt_id}",
@@ -766,9 +767,10 @@ Return ONLY the image prompt, no explanation."""
                 except requests.exceptions.RequestException:
                     pass  # Retry polling
 
-                _time.sleep(2.0)
+                poll_count += 1
+                _time.sleep(min(1.0 * 1.5 ** poll_count, 5.0))
 
-            logger.error("ComfyUI generation timeout (120s)")
+            logger.error("ComfyUI generation timeout (300s)")
             return None
 
         except requests.exceptions.RequestException as e:

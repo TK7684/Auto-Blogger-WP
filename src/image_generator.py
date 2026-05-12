@@ -751,8 +751,8 @@ Return ONLY the image prompt, no explanation."""
                     if prompt_id in history:
                         result = history[prompt_id]
                         # Check if generation is complete
-                        if "outputs" in result and "7" in result["outputs"]:
-                            images = result["outputs"]["7"].get("images", [])
+                        if "outputs" in result and "9" in result["outputs"]:
+                            images = result["outputs"]["9"].get("images", [])
                             if images:
                                 image_name = images[0].get("filename")
                                 if image_name:

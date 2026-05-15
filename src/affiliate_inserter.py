@@ -177,6 +177,50 @@ def _render_card(topic: str, search_url: str, featured_url: Optional[str]) -> st
     return card
 
 
+def _find_paragraph_boundaries(content: str, max_boundaries: int = 3) -> list[int]:
+    """Find natural paragraph boundaries for card insertion.
+
+    Strategy: divide article into segments and place cards at ~33%, ~55%, ~75%
+    through the content at paragraph endings. Returns list of char indices.
+
+    Args:
+        content: HTML content string
+        max_boundaries: Maximum number of insertion points (default 3)
+
+    Returns:
+        List of character indices where cards should be inserted.
+    """
+    if not content or len(content) < 800:
+        return []
+
+    # Find all paragraph boundaries
+    boundary_re = re.compile(r"</p>\s*|\n\s*\n")
+    boundaries = [m.end() for m in boundary_re.finditer(content)]
+    if not boundaries:
+        return []
+
+    # Target positions: ~33%, ~55%, ~75% through content
+    content_len = len(content)
+    targets = [
+        content_len * t for t in [0.33, 0.55, 0.75]
+    ][:max_boundaries]
+
+    result = []
+    for target_pos in targets:
+        # Find the boundary closest to target_pos
+        best = None
+        best_dist = float("inf")
+        for b in boundaries:
+            dist = abs(b - target_pos)
+            if dist < best_dist and (not result or b > result[-1] + 200):
+                best_dist = dist
+                best = b
+        if best is not None and best not in result:
+            result.append(best)
+
+    return result
+
+
 def _render_product_card(product: dict) -> str:
     """Render one Shopee product as a compact HTML card.
 
@@ -253,7 +297,59 @@ def _render_dynamic_card(topic: str, products: list[dict], search_url: str) -> s
     )
 
 
-def _try_fetch_products(topic: str, limit: int = 5) -> list[dict]:
+def insert_product_cards_at_boundaries(
+    content: str,
+    products: list[dict],
+    search_url: str,
+    max_cards: int = 3,
+) -> str:
+    """Insert individual product recommendation cards at natural paragraph boundaries.
+
+    Instead of a single block of product cards, distributes them throughout the article
+    at ~33%, ~55%, ~75% positions. Research shows distributed cards convert better
+    than a single clump because the reader encounters them naturally as they scroll.
+
+    Args:
+        content: Article HTML content
+        products: List of product dicts (max `max_cards` will be used)
+        search_url: Shopee search URL for the "see more" CTA
+        max_cards: Maximum number of product cards to insert (default 3)
+
+    Returns:
+        Modified content with product cards inserted at paragraph boundaries.
+    """
+    if not products or not content:
+        return content
+
+    products = products[:max_cards]
+    boundaries = _find_paragraph_boundaries(content, max_boundaries=max_cards)
+
+    if not boundaries:
+        # No good boundaries — fall back to single inline insertion
+        card_html = _render_dynamic_card("สินค้าแนะนำ", products, search_url)
+        return content + "\n\n" + card_html
+
+    # Insert one card per boundary, from bottom-up to preserve indices
+    result = content
+    for i, boundary_idx in enumerate(reversed(boundaries)):
+        card_idx = len(boundaries) - 1 - i
+        if card_idx < len(products):
+            card_html = _render_product_card(products[card_idx])
+            if card_html:
+                result = result[:boundary_idx] + "\n\n" + card_html + "\n\n" + result[boundary_idx:]
+
+    # Add a final "see more" CTA at the end
+    cta = _render_exit_cta(search_url)
+    result = result + "\n\n" + cta
+
+    logger.info(
+        f"[affiliate] inserted {min(len(products), len(boundaries))} product cards at "
+        f"paragraph boundaries + exit CTA"
+    )
+    return result
+
+
+def _try_fetch_products(topic: str, limit: int = 5, article_text: str = "") -> list[dict]:
     """Attempt to pull products from the Shopee API. Return [] on any failure.
 
     Resolution order:
@@ -266,9 +362,15 @@ def _try_fetch_products(topic: str, limit: int = 5) -> list[dict]:
     Imports are lazy so this module stays importable on init-time errors.
     """
     # 1) Try the live Shopee API first — if creds work, real-time data is best.
+    # If article_text is provided, use the dynamic article-aware matching.
     try:
         from src.clients import shopee  # lazy import — isolates import errors
-        products = shopee.search_products(topic, limit=limit)
+        if article_text and hasattr(shopee, "search_products_for_article"):
+            products = shopee.search_products_for_article(
+                article_text=article_text, topic=topic, limit=limit
+            )
+        else:
+            products = shopee.search_products(topic, limit=limit)
         if products:
             return products
     except Exception as e:
@@ -291,12 +393,14 @@ def _try_fetch_products(topic: str, limit: int = 5) -> list[dict]:
     return []
 
 
-def insert_shopee_card(content: str, topic: str) -> str:
+def insert_shopee_card(content: str, topic: str, article_text: str = "") -> str:
     """Append a Shopee affiliate CTA card to the article content.
 
     Resolution order:
       1. Try Shopee API (SHOPEE_APP_ID + SHOPEE_APP_SECRET set, creds work) →
          render rich card with N real product cards + "see more" CTA.
+         If article_text is provided, uses dynamic article-aware product matching
+         and distributes cards at natural paragraph boundaries (max 3).
       2. Fall back to static search-only CTA card (requires SHOPEE_AFFILIATE_ID).
       3. No-op if neither auth method is configured.
 
@@ -315,20 +419,32 @@ def insert_shopee_card(content: str, topic: str) -> str:
         # No auth configured at all — no-op. (Neither API creds work dynamic,
         # nor SHOPEE_AFFILIATE_LINKS short links, nor SHOPEE_AFFILIATE_ID fallback.)
         if not affiliate_id and not fixed_links:
-            products_check = _try_fetch_products(topic_clean, limit=1)
+            products_check = _try_fetch_products(topic_clean, limit=1, article_text=article_text)
             if not products_check:
                 logger.debug("[affiliate] no auth + no products — skipping")
                 return content
 
         # Build the primary card (dynamic if API returns products, static otherwise)
         search_url = _build_search_url(topic_clean, affiliate_id or "")
-        products = _try_fetch_products(topic_clean, limit=5)
+        products = _try_fetch_products(topic_clean, limit=5, article_text=article_text)
 
         # DYNAMIC card is preferred whenever we have products — each product
         # ships its own offerLink (already affiliate-tracked), so attribution
         # works even without SHOPEE_AFFILIATE_ID. The id is only used for the
         # secondary "see more" search CTA.
         if products:
+            # If we have article_text, use distributed card placement at paragraph boundaries
+            if article_text and len(products) >= 2:
+                primary_card = insert_product_cards_at_boundaries(
+                    content, products, search_url, max_cards=3
+                )
+                mode = "DISTRIBUTED"
+                logger.info(
+                    f"🛒 Shopee affiliate — {mode} (topic='{topic_clean[:40]}', "
+                    f"products={len(products)})"
+                )
+                return primary_card
+
             primary_card = _render_dynamic_card(topic_clean, products, search_url)
             mode = "DYNAMIC"
         elif affiliate_id:

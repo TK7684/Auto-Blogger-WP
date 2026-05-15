@@ -253,7 +253,7 @@ def _render_dynamic_card(topic: str, products: list[dict], search_url: str) -> s
     )
 
 
-def _try_fetch_products(topic: str, limit: int = 3) -> list[dict]:
+def _try_fetch_products(topic: str, limit: int = 5) -> list[dict]:
     """Attempt to pull products from the Shopee API. Return [] on any failure.
 
     Resolution order:
@@ -322,7 +322,7 @@ def insert_shopee_card(content: str, topic: str) -> str:
 
         # Build the primary card (dynamic if API returns products, static otherwise)
         search_url = _build_search_url(topic_clean, affiliate_id or "")
-        products = _try_fetch_products(topic_clean, limit=3)
+        products = _try_fetch_products(topic_clean, limit=5)
 
         # DYNAMIC card is preferred whenever we have products — each product
         # ships its own offerLink (already affiliate-tracked), so attribution

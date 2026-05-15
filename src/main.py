@@ -56,7 +56,7 @@ WP_URL = os.environ.get("WP_URL")
 WP_USER = os.environ.get("WP_USER")
 WP_APP_PASSWORD = os.environ.get("WP_APP_PASSWORD")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-SITE_URL = os.environ.get("SITE_URL", "https://pedpro.online")
+SITE_URL = os.environ.get("SITE_URL", "https://pedpro.online").rstrip("/")
 IMAGE_GENERATION_ENABLED = os.environ.get("IMAGE_GENERATION_ENABLED", "true").lower() == "true"
 VERIFY_AFTER_PUBLISH = os.environ.get("VERIFY_AFTER_PUBLISH", "true").lower() == "true"
 

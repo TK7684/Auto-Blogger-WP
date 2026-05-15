@@ -1,0 +1,6 @@
+# ads.txt for pedpro.online
+# Google AdSense — replace with your publisher ID after approval
+google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0
+
+# Placeholder — add additional ad networks here as needed
+# example.com, 12345, DIRECT, ABC123

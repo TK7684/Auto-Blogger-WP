@@ -47,6 +47,7 @@ class _Item:
     context: str
     lang: str = "en"
     article_type: str = "trending"  # trending | research
+    _subreddit: str = ""  # for Reddit source filtering
 
     def as_tuple(self) -> Trend:
         return (self.topic, self.context, self.lang, self.article_type)
@@ -101,6 +102,7 @@ def _fetch_reddit_hot(subreddit: str = "popular", limit: int = 10) -> List[_Item
                 topic=title[:110],
                 context=(d.get("selftext") or "")[:400] or f"r/{d.get('subreddit')} · {d.get('ups')} ups",
                 article_type="trending",
+                _subreddit=d.get("subreddit", ""),
             ))
         return items
     except Exception as e:
@@ -291,6 +293,106 @@ RESEARCHY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---- Topic quality filters -------------------------------------------------
+
+# Blacklist: low-value topics that waste publishing slots
+_BLACKLIST_RE = re.compile(
+    r"\bmeirl\b|\[OC\]|test results|meme|shitpost|upvote|redditor|"
+    r"dank|wholesome|nsfw|cursed|looks(?=\s+like)|when\s+you|"
+    r"girl|bro\b|guy\b|unpopular\s+opinion|first\s+time|found\s+the|"
+    r"can(?=\s+confirm)|what\s+is|who\s+is|does\s+anyone|"
+    r" finally|every\s+time|nobody:|am\s+i\s+the\s+only|"
+    r"til\s|lmfao|lol\b|ngl|tbh|imo|fwiw|"
+    r"showerthought|perfectly\s+cromulent|just\s+neckbeard",
+    re.IGNORECASE,
+)
+
+# Blacklist subreddits that produce low-quality content
+_BLACKLIST_SUBREDDITS = frozenset({
+    "me_irl", "memes", "dankmemes", "shitposting", "mildlyinteresting",
+    "todayilearned", "interestingasfuck", "oddlysatisfying",
+    "aww", "funny", "gaming", "pics", "EarthPorn",
+    "thatsinsane", "insaneparents", "IdiotsInCars",
+    "Unexpected", "perfectlycutscreams", "MadeMeSmile",
+    "antiwork", "TikTokCringe", "teenagers",
+})
+
+# Preferred niche keywords — topics matching these get a score boost
+_NICHE_BOOST_RE = re.compile(
+    r"\b(?:"
+    r"AI|artificial intelligence|machine learning|deep learning|LLM|GPT|gemini|"
+    r"technology|software|programming|developer|python|javascript|"
+    r"business|startup|entrepreneur|ecommerce|marketing|finance|investing|crypto|bitcoin|"
+    r"health|wellness|fitness|nutrition|mental health|"
+    r"science|research|study|discovery|space|climate|"
+    r"how-?to|guide|tutorial|tips|best|top\s+\d+|review|"
+    r"productivity|remote work|automation|robot|IoT|"
+    r"sustainable|green|renewable|electric|EV\b|"
+    r"cybersecurity|data|cloud|server|"
+    r"travel|lifestyle|fashion|beauty|"
+    r"pet|dog|cat|animal|"
+    r"food|recipe|cooking|"
+    r"education|learning|course|"
+    r"design|UX|UI|creativ)"
+    r"\b",
+    re.IGNORECASE,
+)
+
+# Minimum quality score threshold (0-100). Topics below this are rejected.
+_MIN_QUALITY_SCORE = 50.0
+
+
+def _topic_quality_score(topic: str, context: str = "", subreddit: str = "") -> float:
+    """Score a topic on quality from 0-100.
+
+    Factors:
+      + Niche relevance (up to +40)
+      + Research-like words (up to +20)
+      + Reasonable length (up to +15)
+      + Context depth (up to +15)
+      - Blacklist match (-100 = auto-reject)
+      - Blacklist subreddit (-100 = auto-reject)
+      - Very short topic (-20)
+    """
+    score = 10.0  # base score
+
+    # Auto-reject checks
+    if _BLACKLIST_RE.search(topic):
+        return 0.0
+    if subreddit.lower() in _BLACKLIST_SUBREDDITS:
+        return 0.0
+
+    # Niche relevance (biggest boost)
+    niche_matches = len(_NICHE_BOOST_RE.findall(topic))
+    score += min(niche_matches * 15, 40)
+
+    # Also check context for niche signals
+    niche_ctx = len(_NICHE_BOOST_RE.findall(context))
+    score += min(niche_ctx * 5, 15)
+
+    # Research-like keywords
+    if _looks_researchy(topic):
+        score += 20
+
+    # Reasonable length (3+ words is ideal, not too long)
+    word_count = len(topic.split())
+    if 3 <= word_count <= 12:
+        score += 15
+    elif 2 <= word_count:
+        score += 8
+    elif word_count > 12:
+        score += 5  # long but could be descriptive
+
+    # Context depth (longer context = more substance)
+    if len(context) > 200:
+        score += 15
+    elif len(context) > 100:
+        score += 10
+    elif len(context) > 30:
+        score += 5
+
+    return min(score, 100.0)
+
 
 def _looks_researchy(title: str) -> bool:
     return bool(RESEARCHY_RE.search(title or ""))
@@ -319,23 +421,128 @@ def _load_topics_json() -> List[_Item]:
 
 
 def _evergreen() -> List[_Item]:
+    """High-quality curated fallback topics when no good trends found.
+
+    Covers preferred niches: tech, business, health, finance, AI, science, how-to.
+    """
     return [
-        _Item("The Future of AI in 2026", "How generative models are reshaping industries.", "en", "research"),
-        _Item("Sustainable Travel Tips", "Low-impact ways to explore the world.", "en", "trending"),
-        _Item("SAR K9 Training Fundamentals", "Foundations of search-and-rescue dog training.", "en", "research"),
+        # AI / Technology
+        _Item("How AI is Transforming Small Business Operations in 2026",
+              "Machine learning tools that help small businesses automate and scale.",
+              "en", "research"),
+        _Item("The Future of AI Assistants: What to Expect Next",
+              "From Gemini to GPT-5 — how AI assistants are evolving and what it means for productivity.",
+              "en", "trending"),
+        _Item("Best AI Tools for Content Creators and Marketers",
+              "A practical guide to AI-powered writing, design, and video tools available today.",
+              "en", "trending"),
+        _Item("Understanding Machine Learning: A Beginner's Guide",
+              "Core concepts of ML explained simply, with real-world examples.",
+              "en", "research"),
+        # Business / Finance
+        _Item("Top 10 Passive Income Ideas for 2026",
+              "Proven strategies for building multiple income streams online and offline.",
+              "en", "trending"),
+        _Item("How to Start an E-Commerce Business with Minimal Budget",
+              "Step-by-step guide from product selection to first sale on a shoestring budget.",
+              "en", "research"),
+        _Item("Investing in 2026: Where to Put Your Money",
+              "A balanced overview of stocks, crypto, real estate, and alternative investments.",
+              "en", "trending"),
+        # Health / Wellness
+        _Item("Science-Backed Benefits of Daily Exercise",
+              "What research says about the physical and mental health benefits of regular movement.",
+              "en", "research"),
+        _Item("Nutrition Guide: What to Eat for Better Energy and Focus",
+              "Evidence-based dietary tips for sustained energy throughout the workday.",
+              "en", "trending"),
+        _Item("How Sleep Quality Affects Your Productivity",
+              "The science of sleep and practical tips for improving rest quality.",
+              "en", "research"),
+        # Tech / How-to
+        _Item("Complete Guide to Setting Up a Smart Home in 2026",
+              "From smart speakers to automated lighting — the essential smart home guide.",
+              "en", "research"),
+        _Item("Best Productivity Apps and Tools for Remote Workers",
+              "Curated list of apps that help remote teams stay organized and efficient.",
+              "en", "trending"),
+        _Item("Cybersecurity Basics Everyone Should Know",
+              "Essential security practices for protecting your digital life.",
+              "en", "trending"),
+        # Pet / Lifestyle (pedpro niche)
+        _Item("How to Choose the Right Pet for Your Lifestyle",
+              "Factors to consider when selecting a dog or cat that matches your daily routine.",
+              "en", "trending"),
+        _Item("Essential Pet Care Tips for First-Time Dog Owners",
+              "Everything you need to know about feeding, training, and health for new dog parents.",
+              "en", "research"),
+        # Thai-language evergreen
+        _Item("เทคนิคการดูแลสุนัขขนยาวในช่วงฤดูร้อน",
+              "วิธีดูแลขนสุนัขพันธุ์ยาว เพื่อป้องกันปัญหาหมัดและโรคผิวหนัง",
+              "th", "trending"),
+        _Item("วิธีเริ่มต้นขายของออนไลน์กับ Shopee สำหรับมือใหม่",
+              "คู่มือเปิดร้าน Shopee ตั้งแต่การลงทะเบียนจนถึงการส่งสินค้าแรก",
+              "th", "research"),
+        _Item("แอปพลิเคชัน AI ที่ควรรู้จักในปี 2026",
+              "รวมแอป AI ยอดนิยมที่ช่วยเพิ่มประสิทธิภาพการทำงานและการเรียน",
+              "th", "trending"),
     ]
 
 
 # ---- Public API -----------------------------------------------------------
 
 def _pick(items: List[_Item], target_type: Optional[str] = None) -> Optional[_Item]:
+    """Pick a random item, filtered by quality score threshold.
+
+    Only items scoring above _MIN_QUALITY_SCORE are considered. If no items
+    pass quality, returns None (caller falls through to evergreen).
+    """
     if not items:
         return None
+
+    # Filter by quality score
+    qualified = []
+    for item in items:
+        score = _topic_quality_score(item.topic, item.context, item._subreddit)
+        if score >= _MIN_QUALITY_SCORE:
+            qualified.append((item, score))
+
+    if not qualified:
+        logger.debug(
+            f"[topic_quality] no items passed quality threshold "
+            f"({_MIN_QUALITY_SCORE}) from {len(items)} candidates"
+        )
+        return None
+
+    # Prefer items of the target type, among qualified items
     if target_type:
-        typed = [i for i in items if i.article_type == target_type]
+        typed = [(i, s) for i, s in qualified if i.article_type == target_type]
         if typed:
-            return random.choice(typed)
-    return random.choice(items)
+            # Weight by quality score — higher-scored items more likely
+            pick = _weighted_choice(typed)
+            logger.debug(f"[topic_quality] picked {pick.topic!r} score={dict(typed)[pick]:.0f}")
+            return pick
+
+    # Fallback: weighted random among all qualified
+    pick = _weighted_choice(qualified)
+    logger.debug(f"[topic_quality] picked {pick.topic!r}")
+    return pick
+
+
+def _weighted_choice(scored_items: list) -> _Item:
+    """Weighted random selection — higher score = higher probability."""
+    if len(scored_items) == 1:
+        return scored_items[0][0]
+    total = sum(s for _, s in scored_items)
+    if total <= 0:
+        return random.choice([i for i, _ in scored_items])
+    r = random.uniform(0, total)
+    cumulative = 0
+    for item, score in scored_items:
+        cumulative += score
+        if r <= cumulative:
+            return item
+    return scored_items[-1][0]
 
 
 def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = None,

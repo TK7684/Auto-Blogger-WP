@@ -7,7 +7,8 @@ import unittest
 from unittest.mock import patch, MagicMock
 import json
 import os
-from src.main import initialize_system, run_content_generation, get_hot_trend
+from src.main import initialize_system, run_content_generation
+from src.trend_sources import get_hot_trend
 from src.main_schemas import SEOArticleMetadata
 
 

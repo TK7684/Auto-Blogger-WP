@@ -10,6 +10,8 @@ Default schedule (all times in local timezone):
 
     09:00  daily    trending    (post)      every day
     09:30  daily    trending    (post)      every day
+    15:00  daily    trending    (post)      every day
+    16:00  daily    trending    (post)      every day
     10:00  weekly   research    (post)      Mondays
     11:00  monthly  research    (post)      1st of month
     14:00  --       verify      (daily)     every day   — audits yesterday
@@ -75,6 +77,8 @@ class Rule:
 DEFAULT_RULES: List[Rule] = [
     Rule("daily_trend_1",  9,  0, "publish", "daily",   "trending"),
     Rule("daily_trend_2",  9, 30, "publish", "daily",   "trending"),
+    Rule("daily_trend_3", 15,  0, "publish", "daily",   "trending"),
+    Rule("daily_trend_4", 16,  0, "publish", "daily",   "trending"),
     Rule("weekly_research", 10, 0, "publish", "weekly",  "research", days_of_week=[0]),
     Rule("monthly_research", 11, 0, "publish", "monthly", "research", day_of_month=1),
     Rule("verify_yesterday", 14, 0, "verify", "daily"),

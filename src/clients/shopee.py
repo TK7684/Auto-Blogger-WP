@@ -33,6 +33,53 @@ def _sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+# Common Thai → English keyword translations for Shopee product search.
+# When a topic contains Thai terms, we try the English equivalent to find
+# more products (Shopee TH indexes both languages).
+_THAI_EN_MAP = {
+    "สุนัข": "dog", "แมว": "cat", "สัตว์เลี้ยง": "pet",
+    "อาหารสัตว์": "pet food", "ของเล่นสุนัข": "dog toy",
+    "เสื้อ": "shirt", "กางเกง": "pants", "รองเท้า": "shoes",
+    "กระเป๋า": "bag", "หมวก": "hat", "แว่นตา": "glasses",
+    "สกินแคร์": "skincare", "ครีม": "cream", "มาส์ก": "mask",
+    "ผิว": "skin", "หน้าใส": "brightening",
+    "มือถือ": "phone", "หูฟัง": "earphone", "ชาร์จ": "charger",
+    "คีย์บอร์ด": "keyboard", "เมาส์": "mouse",
+    "บ้าน": "home", "ครัว": "kitchen", "ห้องนอน": "bedroom",
+    "กล้อง": "camera", "ดิจิทัล": "digital",
+    "ออกกำลังกาย": "exercise", "ฟิตเนส": "fitness",
+    "หนังสือ": "book", "เรียน": "study",
+}
+
+
+def _build_keyword_variants(keyword: str) -> list[str]:
+    """Build a list of keyword search variants for broader product matching.
+
+    Returns the original keyword first, then Thai→English translations,
+    then shortened versions (first 2-3 words).
+    """
+    variants = [keyword]
+    kw_lower = keyword.lower()
+
+    # Thai → English translations
+    for th, en in _THAI_EN_MAP.items():
+        if th in kw_lower and en not in " ".join(variants).lower():
+            variants.append(en)
+
+    # Shorten: take first 2-3 significant words
+    words = keyword.split()
+    if len(words) > 3:
+        short = " ".join(words[:3])
+        if short.lower() not in kw_lower:
+            variants.append(short)
+    if len(words) > 2:
+        short2 = " ".join(words[:2])
+        if short2.lower() not in kw_lower and short2 != variants[-1]:
+            variants.append(short2)
+
+    return variants
+
+
 def _generate_auth(payload: str) -> dict:
     """
     Generate authorization headers for Shopee GraphQL API.
@@ -98,6 +145,9 @@ def search_products(keyword: str, limit: int = 5) -> list[dict]:
 
     Value score = commission × sales (higher is better).
 
+    Strategy: for better relevance, we also try shortened keyword variants
+    and English translations of common Thai terms to maximize product matches.
+
     Args:
         keyword: Search keyword
         limit: Max number of results to return
@@ -109,9 +159,16 @@ def search_products(keyword: str, limit: int = 5) -> list[dict]:
         logger.warning("SHOPEE_APP_ID or SHOPEE_APP_SECRET not set, returning empty list")
         return []
 
-    query = f"""
+    # Build keyword variants for broader matching
+    keyword_variants = _build_keyword_variants(keyword)
+    
+    all_products = []
+    seen_ids = set()
+    
+    for kw in keyword_variants[:3]:  # Try up to 3 variants to avoid rate limits
+        query = f"""
     {{
-      productSearchV3(keyword: "{keyword}", limit: 100, page: 1) {{
+      productSearchV3(keyword: "{kw}", limit: 50, page: 1) {{
         nodes {{
           itemId
           productName
@@ -133,33 +190,42 @@ def search_products(keyword: str, limit: int = 5) -> list[dict]:
     }}
     """
 
-    payload = json.dumps({"query": query})
-    auth = _generate_auth(payload)
+        payload = json.dumps({"query": query})
+        auth = _generate_auth(payload)
 
-    try:
-        with httpx.Client() as client:
-            response = client.post(
-                ENDPOINT,
-                headers=auth["headers"],
-                content=payload,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
+        try:
+            with httpx.Client() as client:
+                response = client.post(
+                    ENDPOINT,
+                    headers=auth["headers"],
+                    content=payload,
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-        products = _extract_products(data)
+            products = _extract_products(data)
+            
+            # Deduplicate by itemId
+            for p in products:
+                pid = p.get("itemId")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    all_products.append(p)
+            
+            if len(all_products) >= limit * 2:
+                break  # Enough candidates
+                
+        except Exception as e:
+            logger.error(f"Error searching products for '{kw}': {e}")
 
-        # Score by commission × sales, sort descending
-        scored = [
-            (p, (p.get("commission") or 0) * (p.get("sales") or 0))
-            for p in products
-        ]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [p[0] for p in scored[:limit]]
-
-    except Exception as e:
-        logger.error(f"Error searching products: {e}")
-        return []
+    # Score by commission × sales, sort descending
+    scored = [
+        (p, (p.get("commission") or 0) * (p.get("sales") or 0))
+        for p in all_products
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [p[0] for p in scored[:limit]]
 
 
 def fetch_products(limit: int = 100, page: int = 1) -> list[dict]:

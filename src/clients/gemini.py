@@ -182,23 +182,32 @@ class GeminiClient:
         payload = {
             "model": zai_model,
             "messages": messages,
+            # glm-5-turbo burns tokens on reasoning before producing content.
+            # Set a generous max_tokens so the actual JSON response fits after reasoning.
+            "max_tokens": 16384,
         }
 
         # Add config options if provided
+        # NOTE: Z.AI glm-5-turbo burns ALL tokens on reasoning when given
+        # response_format json_schema/json_object, leaving content empty.
+        # Instead, inject the schema into the prompt and let parse_json_lenient
+        # extract JSON from free-form output (same approach Hermes uses).
         if config:
             if hasattr(config, 'temperature') and config.temperature is not None:
                 payload["temperature"] = config.temperature
+            # Inject JSON schema into the last user message instead of response_format
             if hasattr(config, 'response_json_schema') and config.response_json_schema is not None:
-                payload["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "response_schema",
-                        "strict": True,
-                        "schema": config.response_json_schema,
-                    },
-                }
+                import json as _json
+                schema_hint = f"\n\nYou MUST respond with valid JSON matching this schema:\n```json\n{_json.dumps(config.response_json_schema, indent=2)}\n```\nRespond with ONLY the JSON object, no explanation."
+                if messages and messages[-1]["role"] == "user":
+                    messages[-1]["content"] += schema_hint
+                else:
+                    messages.append({"role": "user", "content": schema_hint})
             elif hasattr(config, 'response_mime_type') and config.response_mime_type == "application/json":
-                payload["response_format"] = {"type": "json_object"}
+                if messages and messages[-1]["role"] == "user":
+                    messages[-1]["content"] += "\n\nRespond with ONLY a valid JSON object, no explanation."
+                else:
+                    messages.append({"role": "user", "content": "Respond with ONLY a valid JSON object, no explanation."})
 
         headers = {
             "Authorization": f"Bearer {self.zai_api_key}",
@@ -213,14 +222,16 @@ class GeminiClient:
             time.sleep(sleep_time)
 
         # Exponential backoff for 429 errors
-        max_retries = 3
+        # ponytail: z.ai glm-5-turbo is extremely slow (often >60s) and
+        # burns all tokens on reasoning. Fail fast so Gemini fallback kicks in.
+        max_retries = 1
         retry_count = 0
         backoff_base = 2   # Start at 2s, cap at 30s
 
         while retry_count < max_retries:
             try:
                 _last_zai_request_time = time.time()
-                with httpx.Client(timeout=420.0) as http_client:
+                with httpx.Client(timeout=60.0) as http_client:
                     response = http_client.post(
                         "https://api.z.ai/api/coding/paas/v4/chat/completions",
                         headers=headers,
@@ -228,7 +239,16 @@ class GeminiClient:
                     )
 
                     if response.status_code == 429:
-                        # Rate limited - exponential backoff (2s → 4s → 8s, capped at 30s)
+                        # Check for balance-exhausted error (code 1113) — no point retrying
+                        try:
+                            err_body = response.json()
+                            err_code = str(err_body.get("error", {}).get("code", ""))
+                            if err_code == "1113":
+                                logger.error("Z.AI balance exhausted (code 1113). Skipping all Z.AI models.")
+                                raise RuntimeError("Z.AI balance exhausted")
+                        except (ValueError, AttributeError):
+                            pass
+                        # Regular rate limit - exponential backoff (2s → 4s → 8s, capped at 30s)
                         retry_count += 1
                         wait_time = min(backoff_base * (2 ** (retry_count - 1)), 30.0)
                         logger.warning(f"Z.AI rate limited (429). Retrying in {wait_time}s (attempt {retry_count}/{max_retries})")
@@ -245,6 +265,18 @@ class GeminiClient:
                         choice = data.get("choices", [{}])[0]
                         message = choice.get("message", {})
                         content = message.get("content", "") or ""
+                        reasoning = message.get("reasoning_content", "") or ""
+                        finish = choice.get("finish_reason", "")
+
+                        # glm-5-turbo may put everything in reasoning_content with
+                        # finish_reason="length" when max_tokens is too low.
+                        if not content.strip() and reasoning:
+                            logger.warning(
+                                f"Z.AI returned empty content (finish={finish}); "
+                                f"reasoning consumed all tokens ({len(reasoning)} chars). "
+                                f"Increasing max_tokens or reducing prompt size may help."
+                            )
+
                         # glm-5.1 wraps JSON in ```json ... ``` fences even with strict schema.
                         # Strip them so downstream json.loads() works.
                         stripped = content.strip()
@@ -274,6 +306,14 @@ class GeminiClient:
                     continue
                 else:
                     raise
+            except (httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Z.AI timeout after {max_retries} retries ({type(e).__name__}). Giving up.")
+                    raise
+                logger.warning(f"Z.AI timeout ({type(e).__name__}). Retrying in {backoff_base * (2 ** (retry_count - 1))}s (attempt {retry_count}/{max_retries})")
+                time.sleep(backoff_base * (2 ** (retry_count - 1)))
+                continue
             except Exception as e:
                 logger.error(f"Z.AI request failed: {e}")
                 raise

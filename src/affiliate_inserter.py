@@ -25,7 +25,7 @@ import logging
 import os
 import re
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlparse, parse_qs, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,84 @@ def _get_affiliate_id() -> Optional[str]:
     """Return SHOPEE_AFFILIATE_ID or None if unset/blank."""
     aid = os.getenv("SHOPEE_AFFILIATE_ID", "").strip()
     return aid or None
+
+
+def _enrich_with_sub_ids(
+    products: list[dict],
+    sub_id: str,
+    post_id: int = 0,
+) -> list[dict]:
+    """Add sub_id tracking to product offerLinks.
+
+    Two strategies (in order of preference):
+
+    1. **API generateBatchShortLink** — if SHOPEE_APP_ID + SHOPEE_APP_SECRET
+       are set, calls Shopee's ``generateBatchShortLink`` mutation which returns
+       brand-new ``s.shopee.co.th/XXX`` short links *with* the sub_id baked in.
+       These links track clicks AND conversions in the Shopee dashboard under
+       Performance → Sub ID report.
+
+    2. **Query-string fallback** — for the curated cache (no API creds), appends
+       ``?x=0&sub_id=pedpro-1234`` to the existing ``s.shopee.co.th/XXX`` link.
+       Shopee's redirector may or may not honour query params on short links;
+       this is best-effort.  The live API path (strategy 1) is the reliable one.
+
+    Returns the same product list with ``_tracked_link`` and ``_sub_id`` added
+    to each dict.  ``_tracked_link`` is what gets rendered in the HTML card.
+    """
+    if not products or not sub_id:
+        return products
+
+    sub_id_value = f"{sub_id}-{post_id}" if post_id else sub_id
+
+    # Strategy 1: try the live API (generateBatchShortLink)
+    has_api_creds = bool(os.getenv("SHOPEE_APP_ID") and os.getenv("SHOPEE_APP_SECRET"))
+    if has_api_creds:
+        try:
+            from src.clients import shopee as shopee_api
+            enriched = shopee_api.generate_short_links(
+                items=products,
+                sub_ids=[sub_id_value],
+            )
+            for p in enriched:
+                short_links = p.get("shortLinks", [])
+                if short_links:
+                    p["_tracked_link"] = short_links[0].get("shortLink", p.get("offerLink", ""))
+                    p["_sub_id"] = short_links[0].get("subId", sub_id_value)
+                    logger.info(
+                        f"[affiliate] API-generated tracked link for item {p.get('itemId')}: "
+                        f"sub_id={p['_sub_id']}"
+                    )
+                else:
+                    p["_tracked_link"] = _append_sub_id_param(p.get("offerLink", ""), sub_id_value)
+                    p["_sub_id"] = sub_id_value
+            return enriched
+        except Exception as e:
+            logger.warning(f"[affiliate] generate_short_links failed, falling back to query-param: {e}")
+
+    # Strategy 2: query-string on cached short links
+    for p in products:
+        offer = p.get("offerLink") or p.get("productLink") or ""
+        p["_tracked_link"] = _append_sub_id_param(offer, sub_id_value)
+        p["_sub_id"] = sub_id_value
+
+    return products
+
+
+def _append_sub_id_param(url: str, sub_id: str) -> str:
+    """Append sub_id as a query parameter to a URL.
+
+    For ``s.shopee.co.th`` short links this may or may not be honoured by
+    Shopee's redirector — it depends on whether their infrastructure strips
+    unknown query params.  Best-effort fallback when API creds are unavailable.
+    """
+    if not url:
+        return url
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    params["sub_id"] = [sub_id]
+    new_query = urlencode({k: v[0] for k, v in params.items()})
+    return urlunparse(parsed._replace(query=new_query))
 
 
 def _get_fixed_links() -> list[str]:
@@ -237,7 +315,7 @@ def _render_product_card(product: dict) -> str:
     sales = product.get("sales") or 0
     rating = product.get("ratingStar") or 0.0
     image = product.get("imageUrl") or ""
-    offer_link = product.get("offerLink") or product.get("productLink") or ""
+    offer_link = product.get("_tracked_link") or product.get("offerLink") or product.get("productLink") or ""
     if not offer_link:
         return ""
 
@@ -269,12 +347,37 @@ def _render_product_card(product: dict) -> str:
     )
 
 
+def _build_why_copy(topic: str, products: list[dict]) -> str:
+    """Generate contextual 'why we recommend' micro-copy for product cards.
+    
+    Makes the product placement feel editorial, not spammy.
+    """
+    topic_lower = topic.lower()
+    
+    # Category-aware copy based on topic keywords
+    if any(w in topic_lower for w in ["ai", "tool", "software", "app", "tech", "gadget", "phone", "laptop", "device"]):
+        why = "เครื่องมือเหล่านี้ช่วยให้งานคุณง่ายขึ้น และมีโปรราคาดีอยู่ตลอด"
+    elif any(w in topic_lower for w in ["pet", "สัตว์", "หมา", "แมว", "สุนัข", "น้อง"]):
+        why = "อุปกรณ์สำหรับน้องหมาน้องแมว คัดสรรจากร้านค้าที่มีคะแนนสูง"
+    elif any(w in topic_lower for w in ["food", "อาหาร", "cook", "ทำอาหาร", "kitchen", "ครัว"]):
+        why = "สินค้าครัวและอาหารยอดนิยม พร้อมส่งฟรีเมื่อซื้อถึงยอด"
+    elif any(w in topic_lower for w in ["beauty", "ผิว", "สกิน", "ดูแล", "ครีม", "มาส์ก"]):
+        why = "ผลิตภัณฑ์ดูแลผิวที่คนไทยรีวิวกันมากที่สุด"
+    elif any(w in topic_lower for w in ["invest", "ลงทุน", "money", "เงิน", "finance", "การเงิน"]):
+        why = "อุปกรณ์และหนังสือเสริมสร้างทักษะการเงิน ช้อปพร้อมโปรดีๆ"
+    else:
+        why = "สินค้าคุณภาพที่เลือกมาให้ตรงกับเนื้อหาบทความ พร้อมรับประกันความพึงพอใจ"
+    
+    return f'<p style="margin:8px 0 4px 0;color:#666;font-size:0.82em;font-style:italic;">{why}</p>'
+
+
 def _render_dynamic_card(topic: str, products: list[dict], search_url: str) -> str:
     """Render a rich card with N real product cards + a fallback search CTA."""
     heading, subcopy_prefix = _seasonal_variant()
-    subcopy = f"{subcopy_prefix} สำหรับ “{topic}” พร้อมโปรโมชั่น"
+    subcopy = f"{subcopy_prefix} สำหรับ \u201c{topic}\u201d พร้อมโปรโมชั่น"
     product_cards = "".join(_render_product_card(p) for p in products if p)
     cta_more = "ดูสินค้าเพิ่มเติมที่ Shopee →"
+    why_copy = _build_why_copy(topic, products)
 
     return (
         '<div class="shopee-affiliate-card" '
@@ -283,6 +386,7 @@ def _render_dynamic_card(topic: str, products: list[dict], search_url: str) -> s
         'font-family:inherit;">'
         f'<h3 style="margin:0 0 6px 0;font-size:1.1em;color:#ee4d2d;">{heading}</h3>'
         f'<p style="margin:0 0 8px 0;color:#333;font-size:0.95em;">{subcopy}</p>'
+        f'{why_copy}'
         f'{product_cards}'
         f'<p style="margin:16px 0 0 0;">'
         f'<a href="{search_url}" rel="sponsored nofollow noopener" target="_blank" '
@@ -393,7 +497,12 @@ def _try_fetch_products(topic: str, limit: int = 5, article_text: str = "") -> l
     return []
 
 
-def insert_shopee_card(content: str, topic: str, article_text: str = "") -> str:
+def insert_shopee_card(
+    content: str,
+    topic: str,
+    article_text: str = "",
+    post_id: int = 0,
+) -> str:
     """Append a Shopee affiliate CTA card to the article content.
 
     Resolution order:
@@ -401,8 +510,16 @@ def insert_shopee_card(content: str, topic: str, article_text: str = "") -> str:
          render rich card with N real product cards + "see more" CTA.
          If article_text is provided, uses dynamic article-aware product matching
          and distributes cards at natural paragraph boundaries (max 3).
+         Products are enriched with sub_id tracking via generateBatchShortLink.
       2. Fall back to static search-only CTA card (requires SHOPEE_AFFILIATE_ID).
       3. No-op if neither auth method is configured.
+
+    Args:
+        content: Article HTML.
+        topic: Topic keyword for product matching.
+        article_text: Full article text for article-aware matching.
+        post_id: WordPress post ID — used as part of sub_id for tracking
+                 which article drove clicks/conversions.
 
     Safe to call unconditionally from the pipeline. Never raises.
     """
@@ -427,6 +544,12 @@ def insert_shopee_card(content: str, topic: str, article_text: str = "") -> str:
         # Build the primary card (dynamic if API returns products, static otherwise)
         search_url = _build_search_url(topic_clean, affiliate_id or "")
         products = _try_fetch_products(topic_clean, limit=5, article_text=article_text)
+
+        # Enrich products with sub_id tracking BEFORE rendering any cards.
+        # sub_id format: "pedpro-{post_id}" so you can identify the source
+        # article in Shopee's Affiliate Dashboard → Performance → Sub ID report.
+        if products:
+            products = _enrich_with_sub_ids(products, sub_id="pedpro", post_id=post_id)
 
         # DYNAMIC card is preferred whenever we have products — each product
         # ships its own offerLink (already affiliate-tracked), so attribution
@@ -488,3 +611,34 @@ def insert_shopee_card(content: str, topic: str, article_text: str = "") -> str:
         # Never let affiliate-injection break publishing.
         logger.warning(f"[affiliate] insertion failed, content unchanged: {e}")
         return content
+
+
+def track_product_placements(products: list[dict], topic: str, placement: str = "inline", article_id: int = 0) -> None:
+    """Log product placements to ShopeeTracker for commission visibility.
+
+    Non-blocking — never raises. Called after insertion so tracking doesn't
+    break the publish pipeline.
+    """
+    if not products:
+        return
+    try:
+        from src.track_shopee_revenue import ShopeeTracker
+        tracker = ShopeeTracker()
+        for p in products:
+            tracker.log(
+                article_id=article_id,
+                product_id=str(p.get("itemId", "")),
+                product_name=(p.get("productName") or "")[:80],
+                product_price=float(p.get("price") or 0),
+                commission_rate=float(p.get("commissionRate") or 0),
+                commission=float(p.get("commission") or 0),
+                rating_star=float(p.get("ratingStar") or 0),
+                sales=int(p.get("sales") or 0),
+                offer_link=p.get("_tracked_link") or p.get("offerLink") or "",
+                topic=topic,
+                placement=placement,
+                sub_id=p.get("_sub_id", ""),
+            )
+        logger.info(f"[affiliate] tracked {len(products)} product placements (topic='{topic[:40]}')")
+    except Exception as e:
+        logger.debug(f"[affiliate] tracking skipped: {e}")

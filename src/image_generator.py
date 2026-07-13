@@ -643,6 +643,8 @@ Return ONLY the image prompt, no explanation."""
 
         # Build Flux Dev FP8 txt2img workflow
         checkpoint = os.environ.get("COMFYUI_CHECKPOINT", "flux1-dev-fp8.safetensors")
+        # Use Schnell for faster generation if checkpoint is flux1-schnell
+        is_schnell = "schnell" in checkpoint.lower()
         workflow = {
             "1": {
                 "inputs": {
@@ -668,7 +670,7 @@ Return ONLY the image prompt, no explanation."""
             },
             "4": {
                 "inputs": {
-                    "guidance": 3.5,
+                    "guidance": 3.5 if not is_schnell else 0.0,
                     "conditioning": ["3", 0]
                 },
                 "class_type": "FluxGuidance"
@@ -676,7 +678,7 @@ Return ONLY the image prompt, no explanation."""
             "5": {
                 "inputs": {
                     "seed": int(uuid.uuid4().int % (2**32)),
-                    "steps": 20,
+                    "steps": 4 if is_schnell else 20,
                     "cfg": 1.0,
                     "sampler_name": "euler",
                     "scheduler": "normal",
@@ -719,6 +721,19 @@ Return ONLY the image prompt, no explanation."""
         }
 
         try:
+            # Check queue is not backed up before submitting
+            try:
+                queue_resp = requests.get(f"{self.comfyui_url}/queue", timeout=5.0)
+                if queue_resp.status_code == 200:
+                    queue = queue_resp.json()
+                    running = len(queue.get("queue_running", []))
+                    pending = len(queue.get("queue_pending", []))
+                    if running > 0 or pending > 2:
+                        logger.warning(f"ComfyUI queue busy (running={running}, pending={pending}), skipping")
+                        return None
+            except requests.exceptions.RequestException:
+                pass  # proceed anyway
+
             # Submit workflow
             logger.info(f"📤 Submitting workflow to ComfyUI: {prompt[:80]}...")
             response = requests.post(
@@ -736,20 +751,32 @@ Return ONLY the image prompt, no explanation."""
 
             logger.info(f"Workflow submitted: {prompt_id}")
 
-            # Poll for completion (max 300 seconds — cold-start model load can take 30-60s)
+            # Poll for completion (max 600 seconds — cold-start model load + queue wait)
+            timeout_secs = float(os.environ.get("COMFYUI_TIMEOUT", "600"))
             start_time = _time.time()
             poll_count = 0
-            while _time.time() - start_time < 300.0:
+            max_retries = 3
+            consecutive_errors = 0
+
+            while _time.time() - start_time < timeout_secs:
                 try:
                     hist_response = requests.get(
                         f"{self.comfyui_url}/history/{prompt_id}",
-                        timeout=5.0
+                        timeout=10.0
                     )
                     hist_response.raise_for_status()
                     history = hist_response.json()
+                    consecutive_errors = 0  # reset on success
 
                     if prompt_id in history:
                         result = history[prompt_id]
+                        # Check for execution errors
+                        status = result.get("status", {})
+                        if status.get("status_str") == "error":
+                            error_msgs = status.get("messages", [])
+                            logger.error(f"ComfyUI workflow execution error: {error_msgs}")
+                            return None
+
                         # Check if generation is complete
                         if "outputs" in result and "9" in result["outputs"]:
                             images = result["outputs"]["9"].get("images", [])
@@ -757,20 +784,32 @@ Return ONLY the image prompt, no explanation."""
                                 image_name = images[0].get("filename")
                                 if image_name:
                                     # Download image
-                                    image_response = requests.get(
-                                        f"{self.comfyui_url}/view?filename={image_name}",
-                                        timeout=10.0
-                                    )
-                                    image_response.raise_for_status()
-                                    logger.info(f"✅ Image generated via ComfyUI")
-                                    return image_response.content
+                                    for dl_attempt in range(max_retries):
+                                        try:
+                                            image_response = requests.get(
+                                                f"{self.comfyui_url}/view?filename={image_name}",
+                                                timeout=30.0
+                                            )
+                                            image_response.raise_for_status()
+                                            logger.info(f"✅ Image generated via ComfyUI ({_time.time() - start_time:.1f}s)")
+                                            return image_response.content
+                                        except requests.exceptions.RequestException as dl_err:
+                                            if dl_attempt < max_retries - 1:
+                                                logger.warning(f"Image download retry {dl_attempt + 1}: {dl_err}")
+                                                _time.sleep(2.0)
+                                            else:
+                                                logger.error(f"Image download failed after {max_retries} retries: {dl_err}")
+                                                return None
                 except requests.exceptions.RequestException:
-                    pass  # Retry polling
+                    consecutive_errors += 1
+                    if consecutive_errors >= 5:
+                        logger.error(f"ComfyUI polling failed {consecutive_errors} times consecutively, aborting")
+                        return None
 
                 poll_count += 1
-                _time.sleep(min(1.0 * 1.5 ** poll_count, 5.0))
+                _time.sleep(2.0)  # fixed 2s interval (no exponential backoff needed for polling)
 
-            logger.error("ComfyUI generation timeout (300s)")
+            logger.error(f"ComfyUI generation timeout ({timeout_secs}s)")
             return None
 
         except requests.exceptions.RequestException as e:

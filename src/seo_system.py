@@ -66,9 +66,48 @@ class SEOPromptBuilder:
             return keywords[0]
         return topic
 
+    # Thai writing style directives — injected when language == "Thai"
+    _THAI_STYLE_BLOCK = """
+THAI WRITING STYLE — อ่านสบาย เป็นธรรมชาติ เหมือนคนเขียนจริง:
+
+ความเป็นมนุษย์ (Humanity):
+- เขียนแบบ "เล่าเรื่องกับเพื่อน" — เหมือนคนไทยคนนึงนั่งคุยกับเพื่อนตัวเอง ไม่ใช่เขียนรายงาน
+- ใช้คำลงท้ายประโยคแบบธรรมชาติ: นะ, ครับ, ค่ะ, น่า, จริงๆ, เลย, มั้ย, ดีกว่า, อะ สลับไปมาอย่างเป็นธรรมชาติ
+- ใช้คำพูดตามสบายเป็นบางประโยค เช่น จริงดิ, ง่ายมากและ, ไม่ต้องกังวล, ลองดูสิ, มาดูกัน, เดี๋ยวเรามาเริ่มกันเลย
+- ใส่รู้สึกจริงเข้าไป: ตกใจเลยครับ, ผมเคยเจอมา, น่าประทับใจมาก, บอกตรงๆ ว่า, ถ้าคิดดีๆ แล้ว
+- เล่าจากประสบการณ์หรือมุมมองจริง — ใช้ "ผมเองก็เคยเจอ", "หลายคนบอกว่า", "จากที่ลองมา"
+
+โครงสร้างย่อหน้า (Structure):
+- ย่อหน้าสั้นๆ 2-3 บรรทัด — คนอ่านบนมือถือเยอะ ต้องอ่านง่าย
+- ผสมประโยคสั้น 1 บรรทัด กับประโยคยาว — สร้างจังหวะการอ่าน ไม่ใช่ย่อหน้ายาวเท่าๆ กัน
+- อย่าเริ่มย่อหน้าด้วยคำเดียวกันเกิน 2 ครั้งติดกัน
+- เว้นบรรทัดว่างระหว่างย่อหน้าเสมอ
+
+ห้ามเขียนเหมือน AI (Anti-AI patterns):
+- ห้ามใช้คำขั้นสูงที่คนไทยไม่คุยกัน: อย่างไรก็ตาม, นอกจากนี้, สิ่งสำคัญ, เป็นที่น่าสังเกต, ในขณะที่, กล่าวคือ
+- ห้ามเขียนสรุปแบบ AI: "โดยสรุปแล้ว", "สรุปได้ว่า", "ในบทความนี้เราได้เรียนรู้"
+- ห้ามใช้ประโยคว่าง: "เป็นสิ่งที่ไม่สามารถปฏิเสธได้", "มีความสำคัญอย่างยิ่ง"
+- อย่าตั้งคำถามแล้วตอบเองแบบ formulaic (Q: ... A: ...)
+- อย่าเริ่มด้วย "คุณรู้หรือไม่ว่า...", "ในโลกปัจจุบัน..."
+- อย่าเขียน bullet list ที่ขึ้นต้นด้วยคำเดียวกันทุกข้อ
+
+เทคนิค Thai Blog Style:
+- ใช้ตัวหนาเน้นคำสำคัญแบบเป็นธรรมชาติ — ไม่ต้องหนาทุกคำ
+- ใส่ emoji เล็กน้อยแบบเป็นธรรมชาติ (1-2 ต่อ section) — อย่าใส่เยอะเกิน
+- จบด้วยความคิดเห็นส่วนตัวหรือคำแนะนำที่รู้สึกจริง
+- ใช้ตัวอย่างที่เข้าใจง่าย — เปรียบเทียบกับชีวิตประจำวันคนไทย
+- เชื่อมหัวข้อด้วยคำพูดธรรมชาติ: "มาดูต่อกันดีกว่า", "แล้วไหนล่ะ", "แต่เดี๋ยวก่อน", "ทีนี้มาดูตัวนี้กัน"
+
+SEO ยังคงต้องมี:
+- ใช้ focus keyword อย่างเป็นธรรมชาติ 5-8 ครั้ง กระจายทั่วบทความ
+- H1 มี focus keyword
+- ยังคงมี FAQ 3-5 คำถาม แต่เขียนแบบคนตอบจริง สั้น กระชับ ใส่คำลงท้าย
+"""
+
     def build_daily_prompt(self, topic: str, context: str,
                           competitor_insights: Optional[str] = None,
-                          language: str = "English") -> str:
+                          language: str = "English",
+                          analytics_brief: Optional[str] = None) -> str:
         """
         Build an SEO-optimized prompt for daily content.
 
@@ -76,6 +115,8 @@ class SEOPromptBuilder:
             topic: The trending topic
             context: Additional context about the topic
             competitor_insights: Optional SERP competitor analysis
+            language: Content language ("English" or "Thai")
+            analytics_brief: Optional performance insights from past analytics
 
         Returns:
             SEO-optimized prompt string
@@ -86,6 +127,27 @@ class SEOPromptBuilder:
         if brand_facts:
             brand_instruction = "\nSTRICT BRAND GUIDELINES (Must follow for factual accuracy):\n- " + "\n- ".join(brand_facts) + "\n"
 
+        # Language-specific style block
+        style_block = ""
+        if language == "Thai":
+            style_block = self._THAI_STYLE_BLOCK
+        else:
+            style_block = """
+WRITING STYLE — Natural, human voice:
+- Write like a real person talking to a friend, not like a textbook or corporate report
+- Mix short punchy sentences with longer ones — vary rhythm and paragraph length
+- Use contractions naturally (you're, it's, don't, we've)
+- Start paragraphs with different words — never 3+ in a row with the same opener
+- Active voice: "We tested it" not "It was tested"
+- Cut filler words: very, truly, actually, in order to → to
+- Ban robotic transitions: Furthermore, Moreover, Additionally, In conclusion, It is important to note
+- Ban empty phrases: "it cannot be denied", "plays a crucial role", "it's worth mentioning"
+- Include personal touches: opinions, real observations, specific examples
+- End with a genuine thought or recommendation, not a generic summary
+- Use formatting naturally: bold key terms, bullet points for lists, numbered steps for processes
+- 2-3 sentences per paragraph max — easy to read on mobile
+"""
+
         prompt = f"""
 Write an SEO blog post in {language} about:
 
@@ -93,28 +155,27 @@ TOPIC: {topic}
 CONTEXT: {context}
 FOCUS KEYWORD: {focus_keyword}
 {brand_instruction}
-
+{style_block}
 IMPORTANT: All content values must be in {language}. JSON keys stay in English.
 Return ONLY valid JSON with ALL these required fields:
 - seo_title: catchy SEO title, max 60 chars
 - meta_description: SEO meta description, max 160 chars, include "{focus_keyword}"
 - focus_keyword: "{focus_keyword}"
 - excerpt: 2-sentence summary
-- content: HTML blog post (H1 heading, 2-3 H2 sections, short paragraphs)
+- content: HTML blog post (H1 heading, 3-5 H2 sections, short paragraphs)
 - suggested_categories: array of 2-3 category names
 - suggested_tags: array of 3-5 tag names
 - image_prompt: description for featured image generation
-- in_article_image_prompts: array of 2 image descriptions for inline images
+- in_article_image_prompts: array of 3 image descriptions for inline images
 
 CONTENT REQUIREMENTS:
-- HTML format with H1 heading, 2-3 H2 sections, short paragraphs
-- Hook the reader in the first sentence with a surprising fact or question
-- Include "{focus_keyword}" naturally 3-5 times
-- Add [IMAGE_PLACEHOLDER_0] and [IMAGE_PLACEHOLDER_1] between sections
-- Keep content 400-600 words — concise and engaging
-- End with a brief FAQ section (2-3 questions) in schema.org FAQPage format
-
-TONE: High energy, authoritative, "you" focused. No fluff.
+HTML format with H1 heading, 3-5 H2 sections, short paragraphs (max 3 sentences each)
+Hook the reader with a relatable scenario, surprising fact, or personal observation (NOT "Did you know...?" or "In today's world...")
+Include "{focus_keyword}" naturally 5-8 times
+Add [IMAGE_PLACEHOLDER_0], [IMAGE_PLACEHOLDER_1], and [IMAGE_PLACEHOLDER_2] between sections (3 total)
+Keep content 800-1200 words — substantive and genuinely useful
+Add a "Pro Tips" or "Things You Need" subsection that naturally mentions 2-3 specific products, tools, or gear related to the topic (brand names, types of items — these help surface relevant Shopee recommendations)
+End with an FAQ section (3-5 questions) in schema.org FAQPage format with genuine, concise answers written in a human voice
 """
 
         if competitor_insights:
@@ -124,6 +185,14 @@ COMPETITOR INSIGHTS (use to improve your content):
 {competitor_insights}
 
 Ensure your content covers these gaps and provides more value than existing articles.
+"""
+
+        if analytics_brief:
+            prompt += f"""
+
+{analytics_brief}
+
+Use these insights to optimize this article's language choice, title length, topic angle, and content structure.
 """
 
         return prompt
@@ -138,6 +207,7 @@ Ensure your content covers these gaps and provides more value than existing arti
             topic: The trending topic
             context: Additional context about the topic
             competitor_insights: Optional SERP competitor analysis
+            language: Content language ("English" or "Thai")
 
         Returns:
             SEO-optimized prompt string
@@ -148,15 +218,35 @@ Ensure your content covers these gaps and provides more value than existing arti
         if brand_facts:
             brand_instruction = "\nSTRICT BRAND GUIDELINES (Must follow for factual accuracy):\n- " + "\n- ".join(brand_facts) + "\n"
 
+        # Language-specific style block — reuse the same Thai/English directives
+        style_block = ""
+        if language == "Thai":
+            style_block = self._THAI_STYLE_BLOCK
+        else:
+            style_block = """
+WRITING STYLE — Natural, human voice for a deep-dive pillar article:
+- Write like an experienced blogger who genuinely knows the topic — not like a textbook or corporate whitepaper
+- Mix short punchy sentences with longer analytical ones — vary rhythm throughout
+- Use contractions naturally (you're, it's, don't, we've)
+- Start paragraphs with different words — never 3+ in a row with the same opener
+- Active voice: "We tested it" not "It was tested"
+- Cut filler words: very, truly, actually, in order to → to
+- Ban robotic transitions: Furthermore, Moreover, Additionally, In conclusion, It is important to note
+- Ban empty phrases: "it cannot be denied", "plays a crucial role", "it's worth mentioning"
+- Include personal touches: opinions, real observations, "I've found that...", "what surprised me was..."
+- End with a genuine thought or recommendation, not a generic summary
+- 2-3 sentences per paragraph max — easy to read on mobile
+"""
+
         prompt = f"""
-You are an expert SEO content writer and senior investigative journalist. Write a comprehensive pillar content article about:
+Write a comprehensive pillar content article in {language} about:
 
 TOPIC: {topic}
 CONTEXT: {context}
 FOCUS KEYWORD: {focus_keyword}
 LANGUAGE: {language}
 {brand_instruction}
-
+{style_block}
 IMPORTANT: Write the entire content (including titles, headings, and body) in {language}. Keep the JSON keys (like SEO_TITLE, IMAGE_PROMPT) in English, but their values must be in {language}.
 
 Requirements:
@@ -264,9 +354,9 @@ SEMANTIC HTML:
 LENGTH: 1500-2000 words (Critical for SEO)
 
 TONE:
-- Authoritative but accessible.
-- Data-driven with statistics (Verified).
-- High energy.
+- Warm, authoritative, and genuine — like a blogger who lives and breathes this topic
+- Data-driven with real statistics, but explained in plain language
+- Personal and specific — include observations, comparisons, "what I've noticed"
 - **STRICTLY NO INSTRUCTION KEYWORDS**: Never include 'IMAGE_PROMPT:', 'SEO_TITLE:' in the HTML.
 
 OUTPUT:

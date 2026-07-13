@@ -110,7 +110,7 @@ class WordPressClient:
         if not self.wp_url: return None
         url = f"{self.wp_url}/wp-json/wp/v2/posts"
         try:
-            response = self.session.post(url, headers=self.headers, json=data, timeout=30)
+            response = self.session.post(url, headers=self.headers, json=data, timeout=120)
             if response.status_code == 201:
                 return response.json().get('id')
             logger.error(f"Failed to create post: {response.status_code} - {response.text}")
@@ -127,7 +127,7 @@ class WordPressClient:
         if not self.wp_url: return False
         url = f"{self.wp_url}/wp-json/wp/v2/posts/{post_id}"
         try:
-            response = self.session.post(url, headers=self.headers, json=data, timeout=30)
+            response = self.session.post(url, headers=self.headers, json=data, timeout=120)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Error updating post {post_id}: {e}")

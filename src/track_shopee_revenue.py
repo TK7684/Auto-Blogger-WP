@@ -59,6 +59,7 @@ class ShopeeTracker:
         offer_link: str = "",
         topic: str = "",
         placement: str = "inline",  # inline, distributed, end
+        sub_id: str = "",  # pedpro-{post_id} for Shopee dashboard tracking
     ) -> dict:
         """Log a product placement for an article.
 
@@ -73,6 +74,10 @@ class ShopeeTracker:
                 # Update existing entry
                 entry["updated_at"] = datetime.now().isoformat()
                 entry["clicks"] = entry.get("clicks", 0) + 1
+                if sub_id:
+                    entry["sub_id"] = sub_id
+                if offer_link:
+                    entry["offer_link"] = offer_link
                 self._save(entries)
                 return entry
 
@@ -88,6 +93,7 @@ class ShopeeTracker:
             "offer_link": offer_link,
             "topic": topic[:80],
             "placement": placement,
+            "sub_id": sub_id,
             "clicks": 1,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),

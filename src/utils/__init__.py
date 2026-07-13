@@ -18,6 +18,9 @@ def parse_json_lenient(text: str) -> dict:
     t = text.strip()
     if not t:
         raise ValueError("response text is empty")
+    # Strip BOM (Z.AI may prepend UTF-8 BOM)
+    if t.startswith("\ufeff"):
+        t = t[1:]
     # Strip ```json / ``` fences
     if t.startswith("```"):
         t = t[3:]
@@ -36,7 +39,18 @@ def parse_json_lenient(text: str) -> dict:
     start = t.find("{")
     end = t.rfind("}")
     if start != -1 and end != -1 and end > start:
-        return json.loads(t[start:end + 1])
+        try:
+            return json.loads(t[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    # Fallback 1.5: try json_repair-style brute-force fix for common LLM issues
+    # (unescaped newlines/quotes inside string values)
+    repaired = _repair_json_string(t)
+    if repaired:
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
     # Fallback 2: parse KEY: value text format (Z.AI GLM-5.1 returns this
     # despite structured-output request — prompt template in seo_system.py
     # demonstrates the KV layout, so the model reproduces it)
@@ -45,10 +59,104 @@ def parse_json_lenient(text: str) -> dict:
         return kv
     # Re-raise with diagnostic snippet
     raise json.JSONDecodeError(
-        f"Failed to parse JSON; leading 200 chars: {text[:200]!r}",
-        text,
+        f"Failed to parse JSON; len={len(t)}, first 200: {t[:200]!r}",
+        t,
         0,
     )
+
+
+def _repair_json_string(raw: str) -> str | None:
+    """Attempt to repair common LLM JSON mistakes and return fixed string (or None).
+
+    Handles:
+    - Unescaped newlines inside string values
+    - Unescaped quotes inside string values (heuristically)
+    - Trailing commas before } or ]
+    """
+    import re as _re
+
+    text = raw.strip()
+    # Quick check: only attempt repair if it looks vaguely JSON-like
+    if not text.startswith("{"):
+        return None
+
+    # Fix trailing commas before } or ]
+    text = _re.sub(r",\s*([}\]])", r"\1", text)
+
+    # Strategy: use a state-machine approach to find unescaped newlines
+    # inside string values and escape them.
+    result = []
+    i = 0
+    in_string = False
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == "\\" and i + 1 < len(text):
+                # Escaped character — pass through as-is
+                result.append(ch)
+                result.append(text[i + 1])
+                i += 2
+                continue
+            elif ch == '"':
+                result.append(ch)
+                in_string = False
+                i += 1
+                continue
+            elif ch == "\n":
+                # Unescaped newline inside string — escape it
+                result.append("\\n")
+                i += 1
+                continue
+            else:
+                result.append(ch)
+                i += 1
+        else:
+            if ch == '"':
+                in_string = True
+                result.append(ch)
+            else:
+                result.append(ch)
+            i += 1
+
+    repaired = "".join(result)
+
+    # Quick validation: try json.loads on the repaired string
+    # If it still fails, try a more aggressive approach: extract content field
+    # by finding the longest string value and re-escaping it
+    try:
+        json.loads(repaired)
+        return repaired
+    except json.JSONDecodeError:
+        pass
+
+    # More aggressive: try to fix unescaped quotes in string values
+    # by finding the content field and re-wrapping it
+    content_match = _re.search(r'"content"\s*:\s*"', repaired)
+    if content_match:
+        # Find the start of the content value
+        val_start = content_match.end() - 1  # the opening "
+        # Try to find matching close quote by scanning for `,
+        # then "suggested_categories" or similar field
+        rest = repaired[val_start + 1:]
+        # Find where content likely ends — look for `",\n    "next_field":` pattern
+        end_match = _re.search(r'(?<!\\)"\s*,\s*\n\s*"', rest)
+        if end_match:
+            content_raw = rest[:end_match.start()]
+            # Re-escape any unescaped quotes in content
+            content_fixed = content_raw.replace('\\"', "\x00ESCAPED_QUOTE\x00")
+            content_fixed = content_fixed.replace('"', '\\"')
+            content_fixed = content_fixed.replace("\x00ESCAPED_QUOTE\x00", '\\"')
+            # Also escape newlines
+            content_fixed = content_fixed.replace("\n", "\\n")
+            new_rest = f'"{content_fixed}"{rest[end_match.start():]}'
+            repaired2 = repaired[:val_start] + new_rest
+            try:
+                json.loads(repaired2)
+                return repaired2
+            except json.JSONDecodeError:
+                pass
+
+    return None
 
 
 def _parse_kv_seo_text(text: str) -> dict:

@@ -99,6 +99,41 @@ _RELEVANCE_KEYWORDS = {
     "ชาร์จ": 1.3, "หูฟัง": 1.3, "แก็ดเจ็ต": 1.3, "มือถือ": 1.3,
 }
 
+# English topic keyword → Thai product search terms mapping.
+# When an English topic has no direct token overlap with Thai product names,
+# these expansions bridge the language gap.
+_TOPIC_EXPANSIONS = {
+    "ai": ["ai", "artificial intelligence", "ปัญญาประดิษฐ์"],
+    "tool": ["เครื่องมือ", "อุปกรณ์", "tool"],
+    "software": ["ซอฟต์แวร์", "software", "โปรแกรม"],
+    "app": ["แอป", "app", "application"],
+    "tech": ["เทคโนโลยี", "technology", "gadget"],
+    "phone": ["มือถือ", "โทรศัพท์", "smartphone"],
+    "laptop": ["แล็ปท็อป", "laptop", "notebook", "คอมพิวเตอร์"],
+    "invest": ["ลงทุน", "investment", "การเงิน", "finance"],
+    "money": ["เงิน", "การเงิน", "finance", "budget"],
+    "pet": ["สัตว์เลี้ยง", "อาหารสัตว์", "pet", "สุนัข", "แมว"],
+    "dog": ["สุนัข", "หมา", "น้องหมา", "อาหารสุนัข"],
+    "cat": ["แมว", "น้องแมว", "อาหารแมว"],
+    "food": ["อาหาร", "food", "ขนม", "อร่อย"],
+    "cook": ["ทำอาหาร", "อุปกรณ์ครัว", "kitchen"],
+    "kitchen": ["ครัว", "อุปกรณ์ครัว", "kitchen"],
+    "beauty": ["ความงาม", "สกินแคร์", "ผิว", "beauty"],
+    "skin": ["ผิว", "สกินแคร์", "ครีม", "ดูแลผิว"],
+    "fashion": ["แฟชั่น", "เสื้อ", "กระโปรง", "เสื้อผ้า"],
+    "health": ["สุขภาพ", "อาหารเสริม", "health", "วิตามิน"],
+    "baby": ["เด็ก", "ทารก", "ของใช้เด็ก", "baby"],
+    "home": ["บ้าน", "ของใช้ในบ้าน", "อุปกรณ์บ้าน", "home"],
+    "travel": ["ท่องเที่ยว", "กระเป๋าเดินทาง", "travel", "การเดินทาง"],
+    "camera": ["กล้อง", "camera", "ถ่ายภาพ"],
+    "gaming": ["เกม", "gaming", "game", "คอนโซล"],
+    "music": ["เพลง", "music", "ลำโพง", "หูฟัง"],
+    "sport": ["กีฬา", "sport", "ออกกำลังกาย", "fitness"],
+    "fitness": ["ออกกำลังกาย", "fitness", "กีฬา", "sport"],
+    "book": ["หนังสือ", "book", "การศึกษา", "เรียน"],
+    "study": ["เรียน", "การศึกษา", "หนังสือ", "อุปกรณ์เรียน"],
+}
+
 
 def _load() -> list[dict]:
     """Load the curated product cache once and memoize."""
@@ -157,20 +192,27 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
 
     Matching:
       1. Token-overlap between keyword tokens and productName tokens — primary key.
-      2. Relevance bonus from _RELEVANCE_KEYWORDS matching keyword tokens.
-      3. value_score (commission × sales) — tiebreak / fallback when no overlap.
+      2. Topic expansion matching — bridges English topics to Thai product names.
+      3. Relevance bonus from _RELEVANCE_KEYWORDS matching keyword tokens.
+      4. value_score (commission × sales) — tiebreak / fallback when no overlap.
 
     Always returns at most `limit` products and never raises.
     """
     products = _load()
-    if not products:
-        return []
-
-    if limit <= 0:
+    if not products or limit <= 0:
         return []
 
     kw_tokens = _tokenize(keyword)
     kw_lower = keyword.lower()
+    
+    # Build expanded search terms from English keywords
+    expanded_terms = set()
+    for eng_word, thai_exps in _TOPIC_EXPANSIONS.items():
+        if eng_word in kw_lower or eng_word in kw_tokens:
+            for exp in thai_exps:
+                expanded_terms.update(_tokenize(exp))
+    # Merge expanded tokens with original keyword tokens
+    search_tokens = kw_tokens | expanded_terms
 
     # Calculate relevance bonus from keyword-level matching
     relevance_bonus = 0.0
@@ -182,7 +224,15 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
     for p in products:
         name_tokens = _tokenize(p.get("productName") or "")
         name_lower = (p.get("productName") or "").lower()
-        overlap = len(kw_tokens & name_tokens) if kw_tokens else 0
+        
+        # Primary: direct token overlap
+        overlap = len(search_tokens & name_tokens) if search_tokens else 0
+        
+        # Expansion bonus: partial matches with Thai product names
+        expansion_score = 0.0
+        for exp_term in expanded_terms:
+            if exp_term in name_lower:
+                expansion_score += 0.5  # Moderate boost for expansion matches
 
         # Product-level relevance: check if product name contains relevance keywords
         product_relevance = 0.0
@@ -191,10 +241,9 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
                 if rkw in name_lower:
                     product_relevance += weight
 
-        # Combined score: overlap * 3 + min(relevance_bonus, product_relevance)
-        # This rewards products that match both topic tokens AND category keywords
+        # Combined score: overlap * 3 + expansion + category match + relevance
         category_match = min(relevance_bonus, product_relevance) if relevance_bonus > 0 else 0
-        combined = overlap * 3.0 + category_match
+        combined = overlap * 3.0 + expansion_score + category_match
         scored.append((combined, _value_score(p), p))
 
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
@@ -204,8 +253,9 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
 
     if has_match:
         logger.debug(
-            "[shopee_curated] keyword=%r matched %d/%d products (score>0)",
-            keyword, sum(1 for s in scored[:limit] if s[0] > 0), len(selected),
+            "[shopee_curated] keyword=%r expanded=%d matched %d/%d products (score>0)",
+            keyword, len(expanded_terms),
+            sum(1 for s in scored[:limit] if s[0] > 0), len(selected),
         )
     else:
         logger.debug(

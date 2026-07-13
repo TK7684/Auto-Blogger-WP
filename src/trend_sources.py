@@ -520,7 +520,8 @@ def _pick(items: List[_Item], target_type: Optional[str] = None) -> Optional[_It
         if typed:
             # Weight by quality score — higher-scored items more likely
             pick = _weighted_choice(typed)
-            logger.debug(f"[topic_quality] picked {pick.topic!r} score={dict(typed)[pick]:.0f}")
+            score = next((s for i, s in typed if i is pick), 0)
+            logger.debug(f"[topic_quality] picked {pick.topic!r} score={score:.0f}")
             return pick
 
     # Fallback: weighted random among all qualified

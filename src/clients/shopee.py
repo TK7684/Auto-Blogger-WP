@@ -593,3 +593,155 @@ def fetch_by_category(
     except Exception as e:
         logger.error(f"Error fetching products by category: {e}")
         return []
+
+
+# ---------------------------------------------------------------------------
+# sub_id tracking via generateBatchShortLink
+# ---------------------------------------------------------------------------
+
+def generate_short_links(
+    items: list[dict],
+    sub_ids: Optional[list[str]] = None,
+) -> list[dict]:
+    """Generate tracked short links with sub_ids for conversion attribution.
+
+    Shopee's ``generateBatchShortLink`` mutation accepts an offerLink and up
+    to 5 sub_ids per item, returning one short link per sub_id.  The sub_id
+    appears in your Shopee Affiliate Dashboard → Performance → Sub ID
+    report so you can see *which article* drove the click/order.
+
+    Each item dict must have an ``offerLink`` key.  Returns enriched items
+    with an additional ``shortLinks`` key: ``[{sub_id, shortLink}, ...]``.
+    """
+    if not APP_ID or not APP_SECRET:
+        logger.warning("[shopee] generate_short_links: no API creds — no sub_id links")
+        return items
+
+    if sub_ids is None:
+        sub_ids = ["pedpro"]
+    if len(sub_ids) > 5:
+        sub_ids = sub_ids[:5]
+
+    enriched: list[dict] = []
+
+    for item in items:
+        offer_link = item.get("offerLink") or item.get("productLink") or ""
+        if not offer_link:
+            enriched.append(item)
+            continue
+
+        # Expand template tokens per-item
+        expanded_sub_ids = []
+        for sid in sub_ids:
+            sid_expanded = (
+                sid.replace("{{itemId}}", str(item.get("itemId", "")))
+                .replace("{{keyword}}", (item.get("productName") or "")[:30])
+            )
+            expanded_sub_ids.append(sid_expanded)
+
+        # Build GraphQL mutation
+        sub_ids_str = ", ".join(f'"{s}"' for s in expanded_sub_ids)
+        query = (
+            '{ mutation { generateBatchShortLink('
+            f'offerLink: "{offer_link}", '
+            f'subIds: [{sub_ids_str}]) {{'
+            "    shortLinks { subId shortLink }"
+            "  }"
+            "} }"
+        )
+
+        payload = json.dumps({"query": query})
+        auth = _generate_auth(payload)
+
+        try:
+            with httpx.Client() as client:
+                resp = client.post(
+                    ENDPOINT,
+                    headers=auth["headers"],
+                    content=payload,
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            short_links = (
+                data.get("data", {})
+                .get("generateBatchShortLink", {})
+                .get("shortLinks", [])
+            )
+
+            enriched_item = {**item, "shortLinks": short_links}
+            for sl in short_links:
+                logger.debug(
+                    f"[shopee] short link: sub_id={sl['subId']} → {sl['shortLink']}"
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"[shopee] generateBatchShortLink failed for item "
+                f"{item.get('itemId')}: {e}"
+            )
+            enriched_item = {**item, "shortLinks": []}
+
+        enriched.append(enriched_item)
+
+    return enriched
+
+
+def get_conversion_report(days: int = 30, limit: int = 100) -> list[dict]:
+    """Pull conversion report from Shopee Affiliate API.
+
+    Returns list of conversion records with conversionId, itemId,
+    orderAmount, commission, status, subId, createTime.
+    Requires SHOPEE_APP_ID + SHOPEE_APP_SECRET.
+    """
+    if not APP_ID or not APP_SECRET:
+        logger.warning("[shopee] get_conversion_report: no API creds")
+        return []
+
+    query = (
+        "{ conversionReport("
+        f"limit: {limit}, "
+        f"offset: 0, "
+        f"dateRange: {{days: {days}}}"
+        ") {"
+        "    nodes {"
+        "      conversionId"
+        "      itemId"
+        "      itemName"
+        "      orderAmount"
+        "      commission"
+        "      status"
+        "      subId"
+        "      createTime"
+        "    }"
+        "    pageInfo { page limit hasNextPage }"
+        "  }"
+        "}"
+    )
+
+    payload = json.dumps({"query": query})
+    auth = _generate_auth(payload)
+
+    try:
+        with httpx.Client() as client:
+            resp = client.post(
+                ENDPOINT,
+                headers=auth["headers"],
+                content=payload,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        nodes = (
+            data.get("data", {})
+            .get("conversionReport", {})
+            .get("nodes", [])
+        )
+        logger.info(f"[shopee] fetched {len(nodes)} conversions (last {days} days)")
+        return nodes
+
+    except Exception as e:
+        logger.error(f"[shopee] get_conversion_report error: {e}")
+        return []

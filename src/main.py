@@ -34,6 +34,7 @@ from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from src.analytics import AnalyticsEngine
 from src.auditor import ContentAuditor
 from src.clients.gemini import GeminiClient
 from src.clients.wordpress import WordPressClient
@@ -196,8 +197,8 @@ def _generate_and_splice_inline_images(
                     source_url = _media_source_url(uploader, media_id) if media_id else None
                     if source_url:
                         img_tag = (
-                            f'<figure class="wp-block-image size-large">'
-                            f'<img src="{source_url}" alt="{topic} — figure {idx+1}" loading="lazy" />'
+                            f'<figure class="wp-block-image size-large is-resized">'
+                            f'<img src="{source_url}" alt="{topic} — figure {idx+1}" loading="lazy" style="max-width:100%;height:auto;" />'
                             f'<figcaption>{topic} — figure {idx+1}</figcaption>'
                             f'</figure>'
                         )
@@ -248,7 +249,10 @@ def run_content_generation(components: Dict, cadence: str = "daily",
 
     # 1. TOPIC
     if manual_topic:
-        topic, context, lang = manual_topic, "Manual Topic", "en"
+        # Auto-detect language from topic text
+        _thai_chars = len([c for c in manual_topic if '\u0E00' <= c <= '\u0E7F'])
+        _detected_lang = "th" if _thai_chars > 3 else "en"
+        topic, context, lang = manual_topic, "Manual Topic", _detected_lang
         final_type = article_type or "trending"
     else:
         topic, context, lang, final_type = get_trending_topic(cadence, article_type)
@@ -258,29 +262,63 @@ def run_content_generation(components: Dict, cadence: str = "daily",
 
     logger.info(f"🎯 cadence={cadence} type={final_type} lang={lang} topic={topic!r}")
 
+    # 1b. ANALYTICS FEEDBACK LOOP — use past performance to optimize new content
+    analytics_brief = None
+    try:
+        from src.analytics import AnalyticsEngine
+        wp_url = os.environ.get("WP_URL", "").rstrip("/")
+        wp_user = os.environ.get("WP_USER", "")
+        wp_pass = os.environ.get("WP_APP_PASSWORD", "")
+        if wp_url and wp_user and wp_pass:
+            analytics = AnalyticsEngine(wp_url, wp_user, wp_pass)
+            analytics_brief = analytics.get_content_brief(days=7)
+            if analytics_brief:
+                logger.info(f"📊 Analytics brief injected into prompt")
+    except Exception as e:
+        logger.warning(f"Could not load analytics brief: {e}")
+
     # 2. CONTENT
     if final_type == "research":
         base_prompt = seo.build_weekly_prompt(topic, context, language=("Thai" if lang == "th" else "English"))
     else:
-        base_prompt = seo.build_daily_prompt(topic, context, language=("Thai" if lang == "th" else "English"))
-    lang_instruction = "Ensure content is in Thai." if lang == "th" else "Ensure content is in English."
+        base_prompt = seo.build_daily_prompt(topic, context, language=("Thai" if lang == "th" else "English"), analytics_brief=analytics_brief)
+    lang_instruction = (
+        "Ensure ALL content is written entirely in Thai — titles, headings, paragraphs, FAQs, everything. "
+        "Follow the Thai writing style rules above strictly. The article must read like a Thai person wrote it, "
+        "not like a translation from English."
+    ) if lang == "th" else "Ensure all content is in English."
     full_prompt = f"{base_prompt}\n\nIMPORTANT: {lang_instruction}\nStrictly follow the JSON schema."
 
-    try:
-        response = gemini.generate_structured_output(
-            model="gemini-2.5-flash",
-            prompt=full_prompt,
-            schema=SEOArticleMetadata.model_json_schema(),
-        )
-        if not response:
-            logger.error("Empty response from LLM")
+    # Retry content generation up to 3 times (JSON parse failures from LLM are common)
+    max_content_retries = 3
+    meta = None
+    for content_attempt in range(1, max_content_retries + 1):
+        try:
+            response = gemini.generate_structured_output(
+                model="gemini-2.5-flash",
+                prompt=full_prompt,
+                schema=SEOArticleMetadata.model_json_schema(),
+            )
+            if not response:
+                logger.error("Empty response from LLM")
+                if content_attempt < max_content_retries:
+                    logger.warning(f"Retrying content generation (attempt {content_attempt + 1}/{max_content_retries})...")
+                    import time; time.sleep(2)
+                    continue
+                return None
+            result = parse_json_lenient(response.text)
+            result = normalize_dict_keys(result)
+            meta = SEOArticleMetadata.model_validate(result)
+            logger.info(f"✅ Content generated (attempt {content_attempt}). Title: {meta.seo_title!r}  focus={meta.focus_keyword!r}")
+            break
+        except Exception as e:
+            logger.error(f"❌ Content generation failed (attempt {content_attempt}/{max_content_retries}): {e}")
+            if content_attempt < max_content_retries:
+                logger.warning(f"Retrying content generation (attempt {content_attempt + 1}/{max_content_retries})...")
+                import time; time.sleep(3)
+                continue
             return None
-        result = parse_json_lenient(response.text)
-        result = normalize_dict_keys(result)
-        meta = SEOArticleMetadata.model_validate(result)
-        logger.info(f"✅ Content generated. Title: {meta.seo_title!r}  focus={meta.focus_keyword!r}")
-    except Exception as e:
-        logger.error(f"❌ Content generation failed: {e}")
+    if meta is None:
         return None
 
     # DRY-RUN GATE — bail out after LLM call so we can verify backend changes
@@ -332,14 +370,6 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     final_content = resolve_internal_links(final_content, existing)
     final_content = clean_remaining_placeholders(final_content)
 
-    # 5b. AFFILIATE CTA — appended after internal-link resolution so the card HTML
-    # is preserved verbatim. No-op when SHOPEE_AFFILIATE_ID is unset.
-    try:
-        from src.affiliate_inserter import insert_shopee_card
-        final_content = insert_shopee_card(final_content, topic)
-    except Exception as e:
-        logger.warning(f"Affiliate inserter failed (non-blocking): {e}")
-
     slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:80]
     post_url = f"{SITE_URL}/{slug}"
     schema_markup = schema.generate_article_schema(
@@ -348,7 +378,7 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     )
     final_content += f"\n\n<script type='application/ld+json'>{json.dumps(schema_markup)}</script>"
 
-    # 6. PUBLISH
+    # 6. PUBLISH (first pass — without affiliate cards so we get the post_id)
     category_id = _resolve_category(wp, final_type, cadence)
     tag_ids = _resolve_tags(wp, meta.suggested_tags + [final_type, cadence])
 
@@ -370,7 +400,54 @@ def run_content_generation(components: Dict, cadence: str = "daily",
         return None
     logger.info(f"🚀 Published post ID: {post_id}  ({post_url})")
 
-    # 7. YOAST + DISCORD
+    # 6b. AFFILIATE CTA — now that we have post_id, inject affiliate cards
+    #     with sub_id tracking (pedpro-{post_id}) so you can see which article
+    #     drove clicks/conversions in Shopee Affiliate Dashboard → Sub ID report.
+    affiliate_products = []
+    try:
+        from src.affiliate_inserter import insert_shopee_card, track_product_placements, _try_fetch_products
+        content_with_affiliate = insert_shopee_card(
+            final_content, topic, article_text=final_content, post_id=post_id,
+        )
+        if content_with_affiliate != final_content:
+            # Affiliate cards were injected — update the published post
+            final_content = content_with_affiliate
+            wp.update_post(post_id, {"content": final_content})
+            logger.info(f"🛒 Updated post {post_id} with affiliate cards (sub_id=pedpro-{post_id})")
+
+            # Fetch the products that were placed for tracking
+            affiliate_products = _try_fetch_products(topic, limit=3, article_text=final_content)
+    except Exception as e:
+        logger.warning(f"Affiliate inserter failed (non-blocking): {e}")
+
+    # 6c. RESPONSIVE IMAGE CSS — append AFTER affiliate cards so it's always last.
+    #     Without this, 1024×1024 ComfyUI images overflow on mobile.
+    _RESPONSIVE_CSS = (
+        "<style>"
+        ".entry-content img,.post-content img,.wp-block-image img{max-width:100%;height:auto;}"
+        ".wp-block-image{max-width:100%;}"
+        "</style>"
+    )
+    if _RESPONSIVE_CSS not in final_content:
+        final_content += "\n" + _RESPONSIVE_CSS
+        try:
+            wp.update_post(post_id, {"content": final_content})
+            logger.info(f"📱 Post {post_id} updated with responsive image CSS")
+        except Exception as e:
+            logger.warning(f"Failed to inject responsive CSS: {e}")
+
+    # 7a. TRACK affiliate product placements for commission visibility
+    if affiliate_products:
+        try:
+            from src.affiliate_inserter import track_product_placements
+            placement_mode = "distributed" if len(affiliate_products) >= 2 else "inline"
+            track_product_placements(
+                affiliate_products, topic, placement=placement_mode, article_id=post_id,
+            )
+        except Exception as e:
+            logger.debug(f"affiliate tracking skipped: {e}")
+
+    # 7b. YOAST + DISCORD
     yoast.update_yoast_meta_fields(post_id, {
         "focus_keyword": meta.focus_keyword,
         "seo_title": meta.seo_title,
@@ -469,10 +546,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     fix = sub.add_parser("fix-links")
     fix.add_argument("limit", type=int, nargs="?", default=50)
 
+    ana = sub.add_parser("analytics", help="Analytics report: views, patterns, optimization")
+    ana.add_argument("--days", type=int, default=7, help="Period in days (default: 7)")
+    ana.add_argument("--top", type=int, default=10, help="Top N posts to show (default: 10)")
+    ana.add_argument("--no-optimize", action="store_true", help="Skip optimization suggestions")
+    ana.add_argument("--json", dest="json_out", action="store_true", help="Output JSON to stdout")
+
     # Default when no subcommand: "publish --cadence daily"
     if not argv or argv[0].startswith("-"):
         args = ap.parse_args(["publish"] + argv)
-    elif argv[0] in ("publish", "maintenance", "fix-links"):
+    elif argv[0] in (["publish", "maintenance", "fix-links", "analytics"]):
         args = ap.parse_args(argv)
     else:
         # Legacy: first arg is a manual topic. Preserve --dry-run if present in tail.
@@ -490,6 +573,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.cmd == "fix-links":
         run_link_fix(system, limit=args.limit)
+        return 0
+    if args.cmd == "analytics":
+        engine = AnalyticsEngine(WP_URL, WP_USER, WP_APP_PASSWORD)
+        if getattr(args, "json_out", False):
+            report = engine.generate_json_report(days=args.days)
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            report = engine.generate_report(
+                days=args.days,
+                top_n=args.top,
+                include_optimize=not getattr(args, "no_optimize", False),
+            )
+            print(report)
         return 0
     # publish
     post_id = run_content_generation(

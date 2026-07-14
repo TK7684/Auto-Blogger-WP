@@ -182,9 +182,12 @@ class GeminiClient:
         payload = {
             "model": zai_model,
             "messages": messages,
-            # glm-5-turbo burns tokens on reasoning before producing content.
-            # Set a generous max_tokens so the actual JSON response fits after reasoning.
+            # glm-5.2 burns massive time/tokens on reasoning before producing content.
+            # Disable thinking entirely for blog content generation — we need the
+            # actual JSON output, not chain-of-thought reasoning. This cuts response
+            # time from 3+ min to ~70s and prevents content-empty responses.
             "max_tokens": 16384,
+            "thinking": {"type": "disabled"},
         }
 
         # Add config options if provided
@@ -231,7 +234,7 @@ class GeminiClient:
         while retry_count < max_retries:
             try:
                 _last_zai_request_time = time.time()
-                with httpx.Client(timeout=60.0) as http_client:
+                with httpx.Client(timeout=180.0) as http_client:
                     response = http_client.post(
                         "https://api.z.ai/api/coding/paas/v4/chat/completions",
                         headers=headers,

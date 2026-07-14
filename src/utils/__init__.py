@@ -43,7 +43,15 @@ def parse_json_lenient(text: str) -> dict:
             return json.loads(t[start:end + 1])
         except json.JSONDecodeError:
             pass
-    # Fallback 1.5: try json_repair-style brute-force fix for common LLM issues
+    # Fallback 1.5: try json_repair library (handles malformed JSON from LLMs robustly)
+    try:
+        import json_repair
+        repaired_obj = json_repair.loads(t)
+        if isinstance(repaired_obj, dict) and repaired_obj:
+            return repaired_obj
+    except Exception:
+        pass
+    # Fallback 1.6: try json_repair-style brute-force fix for common LLM issues
     # (unescaped newlines/quotes inside string values)
     repaired = _repair_json_string(t)
     if repaired:

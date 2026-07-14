@@ -147,10 +147,10 @@ class GeminiClient:
     # Map quality-tier Gemini models → glm-5.1, fast-tier → glm-5-turbo.
     # Benefits: glm-5-turbo burns less quota → better fallback behavior on rate limits.
     ZAI_MODEL_MAP = {
-        "gemini-2.5-flash": "glm-5-turbo",   # was glm-5.1 (flagship) — timed out at 300s on SEO prompts
-        "gemini-2.0-flash": "glm-5-turbo",   # general-purpose fast → turbo
-        "gemini-1.5-pro":   "glm-5-turbo",   # was glm-5.1 — same timeout risk
-        "gemini-1.5-flash": "glm-5-turbo",   # quick, cheap → turbo
+        "gemini-2.5-flash": "glm-5.2",   # glm-5.2 works on coding plan, glm-5-turbo times out
+        "gemini-2.0-flash": "glm-5.2",   # general-purpose fast → glm-5.2
+        "gemini-1.5-pro":   "glm-5.2",   # flagship quality
+        "gemini-1.5-flash": "glm-5.2",   # quick, cheap
     }
 
     def _generate_zai_content(self, model: str, contents: Any, config: Optional[types.GenerateContentConfig] = None) -> Any:

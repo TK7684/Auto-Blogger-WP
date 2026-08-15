@@ -30,7 +30,22 @@ def parse_json_lenient(text: str) -> dict:
         if t.endswith("```"):
             t = t[:-3]
         t = t.rstrip()
-    # First pass
+    # Double-encoded JSON unwrap (2026-08-15 Z.AI regression): Z.AI sometimes
+    # returns the JSON object wrapped in an extra layer of string encoding —
+    # json.loads succeeds but yields a str (starting with '{'), not a dict.
+    # Re-parse the inner string (max 2 layers) instead of failing at char 0.
+    for _ in range(2):
+        try:
+            parsed = json.loads(t)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, str) and parsed.strip().startswith("{"):
+            t = parsed.strip()
+            continue
+        break
+    # First pass (in case the loop above exited without a direct dict return)
     try:
         return json.loads(t)
     except json.JSONDecodeError:

@@ -104,8 +104,20 @@ def _strip_html(html: str) -> str:
 
 
 def _word_count(html: str) -> int:
+    """Count words, handling Thai (no inter-word spaces).
+
+    Whitespace-splitting undercounts Thai text drastically (~4-5x): a 1,000-word
+    Thai article counts as ~200 "words" because Thai writes words consecutively.
+    Fix (2026-08-16): count ASCII words via whitespace split + estimate Thai
+    words from Thai-script character runs (avg Thai word ≈ 5 chars, a common
+    rule-of-thumb consistent with tokenizers like pythainlp).
+    """
     text = _strip_html(html)
-    return len([w for w in re.split(r"\s+", text) if w])
+    ascii_words = len([w for w in re.split(r"\s+", text) if w and any(c.isascii() and c.isalpha() for c in w)])
+    # Thai word estimate: total Thai chars / 5 (avg word length incl. vowels+marks)
+    thai_chars = sum(1 for c in text if "\u0e00" <= c <= "\u0e7f")
+    thai_words = thai_chars // 5
+    return ascii_words + thai_words
 
 
 def _classify(post: Dict[str, Any], content: str) -> str:

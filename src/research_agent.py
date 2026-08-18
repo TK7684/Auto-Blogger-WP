@@ -19,8 +19,9 @@ from .clients.gemini import GeminiClient
 
 logger = logging.getLogger(__name__)
 
-# Use a stable, high-capacity model
-DEFAULT_RESEARCH_MODEL = "gemini-2.0-flash"
+# Use a stable, high-capacity model (gemini-2.0-flash retired by Google
+# upstream — 404 as of 2026-08; mapped to glm-5.2 on Z.AI, 2.5-flash on GCP)
+DEFAULT_RESEARCH_MODEL = "gemini-2.5-flash"
 
 @dataclass
 class Article:

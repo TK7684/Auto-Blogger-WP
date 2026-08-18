@@ -25,6 +25,69 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 
+# --- image format helpers ---------------------------------------------------
+
+# Minimal JPEG/WebP optimization for blog delivery: WP uploads historically
+# received ComfyUI PNGs mislabeled as .jpg (Content-Type: image/jpeg with PNG
+# magic bytes). Sniff + convert to real JPEG, cap dimensions, ~4-5x size cut.
+WEB_JPEG_QUALITY = int(os.environ.get("IMAGE_JPEG_QUALITY", "82"))
+WEB_JPEG_MAX_DIM = int(os.environ.get("IMAGE_JPEG_MAX_DIM", "1600"))
+
+
+def sniff_mime(data: bytes) -> str:
+    """Return the actual MIME type of image bytes via magic-byte sniffing."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:2] == b"BM":
+        return "image/bmp"
+    return "application/octet-stream"
+
+
+def to_web_jpeg(data: bytes, max_dim: Optional[int] = None, quality: Optional[int] = None) -> Tuple[bytes, str]:
+    """Convert arbitrary image bytes to an optimized JPEG for web delivery.
+
+    Returns (jpeg_bytes, mime). On any PIL failure, returns the original
+    bytes untouched (never loses an image to a conversion bug).
+    """
+    max_dim = max_dim if max_dim is not None else WEB_JPEG_MAX_DIM
+    quality = quality if quality is not None else WEB_JPEG_QUALITY
+    try:
+        from io import BytesIO
+        from PIL import Image
+        resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+        img = Image.open(BytesIO(data))
+        img.load()
+        if img.mode in ("RGBA", "P", "LA"):
+            # Flatten transparency onto white (JPEG has no alpha).
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), resampling)
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=quality, optimize=True, progressive=True)
+        jpeg = out.getvalue()
+        if jpeg and len(jpeg) < len(data):
+            return jpeg, "image/jpeg"
+        # Conversion didn't help (rare) — keep original if it is already JPEG.
+        if sniff_mime(data) == "image/jpeg":
+            return data, "image/jpeg"
+        return jpeg, "image/jpeg"
+    except Exception as e:
+        logger.warning(f"JPEG conversion skipped ({e}); using original bytes ({sniff_mime(data)})")
+        return data, sniff_mime(data)
+
+
 # Error categorization for smart retry logic
 class RetryableError(Exception):
     """Base class for errors that should be retried."""
@@ -451,13 +514,48 @@ class ImageGenerator:
         self.comfyui_url = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
         self.session = requests.Session()
 
-    def generate_image(self, prompt: str, mode: str = "daily", content_context: str = None) -> Optional[bytes]:
+    # Flux-friendly style anchors. Flux ignores negative prompts (CFG 1.0), so
+    # lettering/watermark avoidance must be stated positively in the prompt.
+    FLUX_STYLE_SUFFIX = (
+        "editorial photography style, professional composition, clean uncluttered layout, "
+        "soft natural lighting, high detail, no text, no words, no letters, no captions, "
+        "no watermark, no logo"
+    )
+
+    # Flux latent grids scale in 16px steps; these stay close to 1MP for speed.
+    _ASPECTS = {
+        "16:9": (1216, 688),
+        "3:2": (1152, 768),
+        "4:3": (1120, 832),
+        "1:1": (1024, 1024),
+        "9:16": (688, 1216),
+    }
+
+    @staticmethod
+    def _comfyui_model_exists(name: str, subdirs: Tuple[str, ...]) -> bool:
+        """Check whether a ComfyUI model file exists locally (search subdirs)."""
+        import glob as _glob
+        roots = os.environ.get("COMFYUI_MODELS_ROOT", "/home/tk578/comfy/ComfyUI/models")
+        for sub in subdirs:
+            for path in _glob.glob(os.path.join(roots, sub, name)):
+                if os.path.isfile(path) or os.path.islink(path):
+                    return True
+        return False
+
+    def _comfyui_dimensions(self, aspect: Optional[str]) -> Tuple[int, int]:
+        """Resolve (width, height) for a named aspect; defaults to 16:9."""
+        if aspect in self._ASPECTS:
+            return self._ASPECTS[aspect]
+        return self._ASPECTS["16:9"]
+
+    def generate_image(self, prompt: str, mode: str = "daily", content_context: str = None, aspect: str = "16:9") -> Optional[bytes]:
         """Generate an image with priority: ComfyUI -> OpenRouter -> HuggingFace -> DALL-E -> Gemini Direct.
 
         Args:
             prompt: Base prompt for image generation
             mode: Generation mode (daily, maintenance, etc.)
             content_context: Optional blog post content for context-aware prompt generation
+            aspect: Target aspect ratio for the ComfyUI path ("16:9", "1:1", ...)
 
         Returns:
             Image bytes if successful, None otherwise (graceful fallback)
@@ -468,7 +566,7 @@ class ImageGenerator:
         # 0. Try ComfyUI (Primary - if running locally)
         logger.info("🎨 Attempting ComfyUI (Primary)...")
         try:
-            comfyui_image = self.generate_image_comfyui(enhanced_prompt)
+            comfyui_image = self.generate_image_comfyui(enhanced_prompt, aspect=aspect)
             if comfyui_image:
                 logger.info("✅ Image generated successfully via ComfyUI")
                 return comfyui_image
@@ -597,7 +695,7 @@ class ImageGenerator:
         if self.gemini_client and self.gemini_client.is_using_openrouter():
             try:
                 response = self.gemini_client.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash",
                     contents=f"""Based on this blog post content, create a concise image prompt (max 100 words) that captures the main theme visually:
 
 Content: {content_snippet}
@@ -615,7 +713,7 @@ Return ONLY the image prompt, no explanation."""
 
         return prompt
 
-    def generate_image_comfyui(self, prompt: str) -> Optional[bytes]:
+    def generate_image_comfyui(self, prompt: str, aspect: Optional[str] = None) -> Optional[bytes]:
         """Generate image using ComfyUI (Flux Dev FP8 workflow).
 
         Requires ComfyUI running on COMFYUI_URL (default: http://127.0.0.1:8188).
@@ -623,6 +721,7 @@ Return ONLY the image prompt, no explanation."""
 
         Args:
             prompt: Image description
+            aspect: Target aspect ("16:9", "1:1", ...) — defaults to 16:9
 
         Returns:
             Image bytes if successful, None otherwise
@@ -645,6 +744,29 @@ Return ONLY the image prompt, no explanation."""
         checkpoint = os.environ.get("COMFYUI_CHECKPOINT", "flux1-dev-fp8.safetensors")
         # Use Schnell for faster generation if checkpoint is flux1-schnell
         is_schnell = "schnell" in checkpoint.lower()
+
+        # T5 encoder selection: prefer fp8 T5 (~4.7GB) over the fp16 UMT5
+        # (~9.4GB). On a 16GB card alongside Flux fp8 UNet this avoids VRAM
+        # thrash that made all 3 daily images slow (168-209s) on 08-07/08-11.
+        # Falls back to fp16 name when fp8 file is absent (ComfyUI errors on
+        # missing files rather than substituting).
+        t5_name = os.environ.get("COMFYUI_T5", "")
+        if not t5_name:
+            t5_name = "t5xxl_fp8_e4m3fn.safetensors"
+            if not self._comfyui_model_exists(t5_name, ("clip", "text_encoders")):
+                t5_name = "t5xxl_fp16.safetensors"
+
+        # Per-purpose sizing: hero is consumed as a 16:9 featured image;
+        # inline figures sit inside article body. 20 steps was overkill —
+        # 14 with euler/normal is visually indistinguishable for editorial
+        # blog art and ~30% faster.
+        width, height = self._comfyui_dimensions(aspect)
+        steps = int(os.environ.get("COMFYUI_STEPS", "14"))
+
+        # Flux renders text badly and has no negative-prompt mechanism (CFG 1.0),
+        # so append positive style anchors: quality cues + explicit no-lettering.
+        styled_prompt = f"{prompt}. {self.FLUX_STYLE_SUFFIX}"
+
         workflow = {
             "1": {
                 "inputs": {
@@ -655,7 +777,7 @@ Return ONLY the image prompt, no explanation."""
             },
             "2": {
                 "inputs": {
-                    "clip_name1": "t5xxl_fp16.safetensors",
+                    "clip_name1": t5_name,
                     "clip_name2": "clip_l.safetensors",
                     "type": "flux"
                 },
@@ -663,7 +785,7 @@ Return ONLY the image prompt, no explanation."""
             },
             "3": {
                 "inputs": {
-                    "text": prompt,
+                    "text": styled_prompt,
                     "clip": ["2", 0]
                 },
                 "class_type": "CLIPTextEncode"
@@ -678,7 +800,7 @@ Return ONLY the image prompt, no explanation."""
             "5": {
                 "inputs": {
                     "seed": int(uuid.uuid4().int % (2**32)),
-                    "steps": 4 if is_schnell else 20,
+                    "steps": 4 if is_schnell else steps,
                     "cfg": 1.0,
                     "sampler_name": "euler",
                     "scheduler": "normal",
@@ -692,8 +814,8 @@ Return ONLY the image prompt, no explanation."""
             },
             "6": {
                 "inputs": {
-                    "width": 1024,
-                    "height": 1024,
+                    "width": width,
+                    "height": height,
                     "batch_size": 1
                 },
                 "class_type": "EmptyLatentImage"
@@ -735,7 +857,7 @@ Return ONLY the image prompt, no explanation."""
                 pass  # proceed anyway
 
             # Submit workflow
-            logger.info(f"📤 Submitting workflow to ComfyUI: {prompt[:80]}...")
+            logger.info(f"📤 Submitting workflow to ComfyUI: {styled_prompt[:80]}...")
             response = requests.post(
                 f"{self.comfyui_url}/prompt",
                 json={"prompt": workflow},
@@ -818,6 +940,171 @@ Return ONLY the image prompt, no explanation."""
         except Exception as e:
             logger.error(f"ComfyUI generation failed: {e}")
             return None
+
+    def generate_images_comfyui_batch(self, jobs: List[Dict[str, Any]]) -> List[Optional[bytes]]:
+        """Generate multiple images in ONE ComfyUI workflow submission.
+
+        Each job: {"prompt": str, "aspect": "16:9"|"3:2"|...}. All chains share
+        the UNet/DualCLIP/VAE loaders, so the models load once and there are no
+        per-image submit/poll round-trips. Returns one entry per job (None on
+        individual chain failure is not possible — a graph error fails all, so
+        callers should fall back to per-image generation on total failure).
+        """
+        import time as _time
+        import uuid as _uuid
+
+        if not jobs:
+            return []
+
+        # Availability check (same as single-image path)
+        try:
+            response = requests.get(f"{self.comfyui_url}/system_stats", timeout=2.0)
+            if response.status_code != 200:
+                logger.warning(f"ComfyUI returned HTTP {response.status_code}")
+                return []
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"ComfyUI not available at {self.comfyui_url}: {e}")
+            return []
+
+        checkpoint = os.environ.get("COMFYUI_CHECKPOINT", "flux1-dev-fp8.safetensors")
+        is_schnell = "schnell" in checkpoint.lower()
+        t5_name = os.environ.get("COMFYUI_T5", "")
+        if not t5_name:
+            t5_name = "t5xxl_fp8_e4m3fn.safetensors"
+            if not self._comfyui_model_exists(t5_name, ("clip", "text_encoders")):
+                t5_name = "t5xxl_fp16.safetensors"
+        steps = int(os.environ.get("COMFYUI_STEPS", "14"))
+
+        # Shared loaders
+        workflow: Dict[str, Any] = {
+            "1": {"inputs": {"unet_name": checkpoint, "weight_dtype": "fp8_e4m3fn"}, "class_type": "UNETLoader"},
+            "2": {"inputs": {"clip_name1": t5_name, "clip_name2": "clip_l.safetensors", "type": "flux"}, "class_type": "DualCLIPLoader"},
+            "7": {"inputs": {"vae_name": "ae.safetensors"}, "class_type": "VAELoader"},
+        }
+        save_nodes: List[str] = []
+        for i, job in enumerate(jobs):
+            prompt = f"{job['prompt']}. {self.FLUX_STYLE_SUFFIX}"
+            width, height = self._comfyui_dimensions(job.get("aspect"))
+            te, fg, li, ks, vd, si = (str(10 + i), str(20 + i), str(30 + i), str(40 + i), str(50 + i), str(60 + i))
+            workflow[te] = {"inputs": {"text": prompt, "clip": ["2", 0]}, "class_type": "CLIPTextEncode"}
+            workflow[fg] = {"inputs": {"guidance": 3.5 if not is_schnell else 0.0, "conditioning": [te, 0]}, "class_type": "FluxGuidance"}
+            workflow[li] = {"inputs": {"width": width, "height": height, "batch_size": 1}, "class_type": "EmptyLatentImage"}
+            workflow[ks] = {
+                "inputs": {
+                    "seed": int(_uuid.uuid4().int % (2**32)),
+                    "steps": 4 if is_schnell else steps,
+                    "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
+                    "model": ["1", 0], "positive": [fg, 0], "negative": [te, 0], "latent_image": [li, 0],
+                },
+                "class_type": "KSampler",
+            }
+            workflow[vd] = {"inputs": {"samples": [ks, 0], "vae": ["7", 0]}, "class_type": "VAEDecode"}
+            workflow[si] = {"inputs": {"filename_prefix": f"auto_blogger_batch_{i}", "images": [vd, 0]}, "class_type": "SaveImage"}
+            save_nodes.append(si)
+
+        try:
+            # Queue pre-check: a batch counts as ONE queue item.
+            try:
+                queue_resp = requests.get(f"{self.comfyui_url}/queue", timeout=5.0)
+                if queue_resp.status_code == 200:
+                    queue = queue_resp.json()
+                    running = len(queue.get("queue_running", []))
+                    pending = len(queue.get("queue_pending", []))
+                    if running > 0 or pending > 2:
+                        logger.warning(f"ComfyUI queue busy (running={running}, pending={pending}), skipping batch")
+                        return []
+            except requests.exceptions.RequestException:
+                pass
+
+            logger.info(f"📤 Submitting batch workflow to ComfyUI ({len(jobs)} images)...")
+            response = requests.post(
+                f"{self.comfyui_url}/prompt",
+                json={"prompt": workflow},
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            prompt_id = response.json().get("prompt_id")
+            if not prompt_id:
+                logger.error("ComfyUI returned no prompt_id for batch")
+                return []
+
+            timeout_secs = float(os.environ.get("COMFYUI_TIMEOUT", "600"))
+            timeout_secs *= max(1, len(jobs))  # scale with batch size
+            start_time = _time.time()
+            consecutive_errors = 0
+
+            while _time.time() - start_time < timeout_secs:
+                try:
+                    hist_response = requests.get(f"{self.comfyui_url}/history/{prompt_id}", timeout=10.0)
+                    hist_response.raise_for_status()
+                    history = hist_response.json()
+                    consecutive_errors = 0
+                    if prompt_id in history:
+                        result = history[prompt_id]
+                        status = result.get("status", {})
+                        if status.get("status_str") == "error":
+                            logger.error(f"ComfyUI batch execution error: {status.get('messages', [])}")
+                            return []
+                        outputs = result.get("outputs", {})
+                        if all(node in outputs for node in save_nodes):
+                            images_out: List[Optional[bytes]] = []
+                            for node in save_nodes:
+                                imgs = outputs.get(node, {}).get("images", [])
+                                if not imgs:
+                                    images_out.append(None)
+                                    continue
+                                image_name = imgs[0].get("filename")
+                                if not image_name:
+                                    images_out.append(None)
+                                    continue
+                                dl = requests.get(
+                                    f"{self.comfyui_url}/view?filename={image_name}",
+                                    timeout=30.0,
+                                )
+                                dl.raise_for_status()
+                                images_out.append(dl.content)
+                            logger.info(f"✅ Batch of {len(jobs)} images via ComfyUI ({_time.time() - start_time:.1f}s)")
+                            return images_out
+                except requests.exceptions.RequestException:
+                    consecutive_errors += 1
+                    if consecutive_errors >= 5:
+                        logger.error(f"ComfyUI batch polling failed {consecutive_errors} times consecutively, aborting")
+                        return []
+                _time.sleep(2.0)
+
+            logger.error(f"ComfyUI batch generation timeout ({timeout_secs:.0f}s)")
+            return []
+        except Exception as e:
+            logger.error(f"ComfyUI batch generation failed: {e}")
+            return []
+
+    def generate_images_batch(self, jobs: List[Dict[str, Any]]) -> List[Optional[bytes]]:
+        """Batch facade: one ComfyUI submission for all jobs; per-image fallback.
+
+        Returns exactly len(jobs) entries; None where generation failed.
+        """
+        results: List[Optional[bytes]] = [None] * len(jobs)
+        try:
+            batch = self.generate_images_comfyui_batch(jobs)
+        except Exception as e:
+            logger.warning(f"⚠️ ComfyUI batch unavailable: {e}")
+            batch = []
+        if batch and all(b is not None for b in batch):
+            return batch
+        # Partial or total batch failure → per-image fallback (cloud cascades apply)
+        for i, job in enumerate(jobs):
+            if batch and i < len(batch) and batch[i] is not None:
+                results[i] = batch[i]
+                continue
+            logger.info(f"🎨 Batch miss for job {i}, falling back to single generation...")
+            try:
+                results[i] = self.generate_image(
+                    job["prompt"], aspect=job.get("aspect", "16:9")
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Fallback generation failed for job {i}: {e}")
+                results[i] = None
+        return results
 
     def generate_image_nanobana(self, prompt: str, model: str = "gemini-2.5-flash-image") -> Optional[bytes]:
         """Generate image using Nanobana (Gemini Image) via OpenRouter.
@@ -1113,12 +1400,20 @@ Return ONLY the image prompt, no explanation."""
 
     def save_image(self, image_data: bytes, filename: str) -> Optional[str]:
         try:
+            # Normalize to a web-friendly JPEG before persisting. ComfyUI emits
+            # PNGs that were historically saved/uploaded as mislabeled .jpg
+            # (PNG bytes, image/jpeg Content-Type) at 750KB-1MB per image.
+            image_data, mime = to_web_jpeg(image_data)
+            ext = ".jpg" if mime == "image/jpeg" else ".png"
+            base, _ = os.path.splitext(filename)
+            filename = base + ext
+
             images_dir = Path("generated_images")
             images_dir.mkdir(exist_ok=True)
             filepath = images_dir / filename
             with open(filepath, 'wb') as f:
                 f.write(image_data)
-            logger.info(f"Image saved to: {filepath}")
+            logger.info(f"Image saved to: {filepath} ({len(image_data) // 1024}KB, {mime})")
             return str(filepath)
         except Exception as e:
             logger.error(f"Error saving image: {e}")
@@ -1136,15 +1431,21 @@ class WordPressMediaUploader:
         """Upload an image to WordPress and return the attachment ID."""
         url = f"{self.wp_url}/wp-json/wp/v2/media"
         token = base64.b64encode(self.credentials.encode()).decode('utf-8')
-        headers = {
-            "Authorization": f"Basic {token}",
-            "Content-Type": "image/jpeg",
-            "Content-Disposition": f"attachment; filename={os.path.basename(file_path)}"
-        }
 
         try:
             with open(file_path, 'rb') as f:
                 image_data = f.read()
+
+            # Content-Type must match actual bytes (WP rejects or mislabels
+            # mismatched uploads; files were previously always image/jpeg).
+            mime = sniff_mime(image_data)
+            if mime == "application/octet-stream":
+                mime = "image/jpeg"
+            headers = {
+                "Authorization": f"Basic {token}",
+                "Content-Type": mime,
+                "Content-Disposition": f"attachment; filename={os.path.basename(file_path)}"
+            }
 
             response = self.session.post(
                 url,

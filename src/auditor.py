@@ -147,7 +147,7 @@ Return the result as JSON following the schema exactly."""
 
         try:
             response = self.gemini_client.generate_structured_output(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 prompt=prompt,
                 schema=AuditResult.model_json_schema()
             )

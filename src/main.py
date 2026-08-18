@@ -26,6 +26,7 @@ import argparse
 import datetime as dt
 import json
 import logging
+import time
 import os
 import re
 import sys
@@ -186,20 +187,24 @@ def _generate_and_splice_inline_images(
         prompt = (prompts[idx] if idx < len(prompts) and prompts[idx] else
                   f"Editorial illustration for section {idx+1} of blog post: {topic}. "
                   f"Professional, high-quality, photorealistic, 16:9.")
+        # Alt text from the LLM's own image prompt: already in the article's
+        # language (TH posts previously got English "{topic} — figure N" alts).
+        alt_text = re.sub(r"\s+", " ", prompt).strip().strip(".")[:125]
+        caption = f"{topic} — figure {idx+1}"
         img_tag = ""
         try:
-            img_bytes = image_gen.generate_image(prompt)
+            img_bytes = image_gen.generate_image(prompt, aspect="3:2")
             if img_bytes:
                 fname = f"inline_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}.jpg"
                 local_path = image_gen.save_image(img_bytes, fname)
                 if local_path:
-                    media_id = uploader.upload_media(local_path, topic, f"{topic} — figure {idx+1}")
+                    media_id = uploader.upload_media(local_path, alt_text, caption)
                     source_url = _media_source_url(uploader, media_id) if media_id else None
                     if source_url:
                         img_tag = (
                             f'<figure class="wp-block-image size-large is-resized">'
-                            f'<img src="{source_url}" alt="{topic} — figure {idx+1}" loading="lazy" style="max-width:100%;height:auto;" />'
-                            f'<figcaption>{topic} — figure {idx+1}</figcaption>'
+                            f'<img src="{source_url}" alt="{alt_text}" loading="lazy" style="max-width:100%;height:auto;" />'
+                            f'<figcaption>{caption}</figcaption>'
                             f'</figure>'
                         )
         except Exception as e:
@@ -332,37 +337,72 @@ def run_content_generation(components: Dict, cadence: str = "daily",
         )
         return -1
 
-    # 3. HERO IMAGE
+    # 3+4. IMAGES — hero + inline generated in ONE ComfyUI batch submission
+    # (one model load, one poll cycle; previously 3-5 separate submit/poll
+    # cycles with ~10-15s gaps between them).
     featured_image_id = None
     featured_image_url = None
+    final_content = meta.content
     if image_gen and uploader:
+        max_inline = INLINE_IMAGES_BY_TYPE.get(final_type, 2)
+        hero_prompt = meta.image_prompt or (
+            f"Featured image for blog post: {topic}. "
+            f"Professional, high-quality, photorealistic, 16:9 aspect ratio."
+        )
+        inline_tokens = sorted({int(t) for t in IMG_PLACEHOLDER_RE.findall(final_content)})[:max_inline]
+
+        def _inline_prompt(idx: int) -> str:
+            if idx < len(meta.in_article_image_prompts or []) and meta.in_article_image_prompts[idx]:
+                return meta.in_article_image_prompts[idx]
+            return (f"Editorial illustration for section {idx+1} of blog post: {topic}. "
+                    f"Professional, high-quality, photorealistic.")
+
+        jobs = [{"prompt": hero_prompt, "aspect": "16:9"}]
+        jobs += [{"prompt": _inline_prompt(i), "aspect": "3:2"} for i in inline_tokens]
+        t0 = time.time()
+        images = image_gen.generate_images_batch(jobs)
+        logger.info(f"🖼️  Batch image gen: {sum(1 for r in images if r)} / {len(jobs)} images in {time.time() - t0:.0f}s")
+
+        # Hero
         try:
-            hero_prompt = meta.image_prompt or (
-                f"Featured image for blog post: {topic}. "
-                f"Professional, high-quality, photorealistic, 16:9 aspect ratio."
-            )
-            img_bytes = image_gen.generate_image(hero_prompt)
-            if img_bytes:
+            if images and images[0]:
                 fname = f"post_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                local_path = image_gen.save_image(img_bytes, fname)
+                local_path = image_gen.save_image(images[0], fname)
                 if local_path:
-                    featured_image_id = uploader.upload_media(local_path, topic, meta.seo_title)
+                    hero_alt = re.sub(r"\s+", " ", hero_prompt).strip().strip(".")[:125]
+                    featured_image_id = uploader.upload_media(local_path, hero_alt, meta.seo_title)
                     if featured_image_id:
                         featured_image_url = _media_source_url(uploader, featured_image_id)
                         logger.info(f"🖼️  Hero image ID={featured_image_id}")
         except Exception as e:
             logger.warning(f"Hero image failed: {e}")
 
-    # 4. INLINE IMAGES
-    final_content = meta.content
-    if image_gen and uploader:
-        max_inline = INLINE_IMAGES_BY_TYPE.get(final_type, 2)
-        before = len(IMG_PLACEHOLDER_RE.findall(final_content))
-        final_content = _generate_and_splice_inline_images(
-            final_content, meta.in_article_image_prompts or [],
-            image_gen, uploader, topic, max_inline,
-        )
-        logger.info(f"🖼️  Inline images processed: {before} placeholders → capped at {max_inline}")
+        # Inline splice (upload only; generation already done in batch)
+        for pos, idx in enumerate(inline_tokens, start=1):
+            img_tag = ""
+            try:
+                if pos < len(images) and images[pos]:
+                    prompt = _inline_prompt(idx)
+                    alt_text = re.sub(r"\s+", " ", prompt).strip().strip(".")[:125]
+                    caption = f"{topic} — figure {idx+1}"
+                    fname = f"inline_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}.jpg"
+                    local_path = image_gen.save_image(images[pos], fname)
+                    if local_path:
+                        media_id = uploader.upload_media(local_path, alt_text, caption)
+                        source_url = _media_source_url(uploader, media_id) if media_id else None
+                        if source_url:
+                            img_tag = (
+                                f'<figure class="wp-block-image size-large is-resized">'
+                                f'<img src="{source_url}" alt="{alt_text}" loading="lazy" style="max-width:100%;height:auto;" />'
+                                f'<figcaption>{caption}</figcaption>'
+                                f'</figure>'
+                            )
+            except Exception as e:
+                logger.warning(f"inline image {idx} failed: {e}")
+            final_content = final_content.replace(f"[IMAGE_PLACEHOLDER_{idx}]", img_tag)
+
+        final_content = IMG_PLACEHOLDER_RE.sub("", final_content)
+        logger.info(f"🖼️  Inline images processed: {len(inline_tokens)} placeholders → capped at {max_inline}")
 
     # 5. INTERNAL LINKS + SCHEMA
     logger.info("🔗 Resolving internal links...")

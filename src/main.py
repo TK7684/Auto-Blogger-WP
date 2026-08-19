@@ -308,7 +308,7 @@ def run_content_generation(components: Dict, cadence: str = "daily",
                 logger.error("Empty response from LLM")
                 if content_attempt < max_content_retries:
                     logger.warning(f"Retrying content generation (attempt {content_attempt + 1}/{max_content_retries})...")
-                    import time; time.sleep(2)
+                    time.sleep(2)
                     continue
                 return None
             result = parse_json_lenient(response.text)
@@ -320,7 +320,7 @@ def run_content_generation(components: Dict, cadence: str = "daily",
             logger.error(f"❌ Content generation failed (attempt {content_attempt}/{max_content_retries}): {e}")
             if content_attempt < max_content_retries:
                 logger.warning(f"Retrying content generation (attempt {content_attempt + 1}/{max_content_retries})...")
-                import time; time.sleep(3)
+                time.sleep(3)
                 continue
             return None
     if meta is None:

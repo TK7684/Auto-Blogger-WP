@@ -94,7 +94,7 @@ _RELEVANCE_KEYWORDS = {
     "ความงาม": 1.5, "หน้าใส": 1.3, "มาส์ก": 1.5, "น้ำหอม": 1.5,
     # Pet (pedpro = pet professional)
     "สุนัข": 2.0, "แมว": 2.0, "สัตว์เลี้ยง": 2.0, "น้องหมา": 2.0,
-    "น้องแมว": 2.0, "อาหารสัตว์": 2.0, "ที่นอนสุนัข": 2.0,
+    "น้องแมว": 2.0, "อาหารสัตว์": 2.0, "ที่นอนสุนัข": 2.0, "หมา": 1.8, "สัตว์": 1.5,
     # Tech / gadgets
     "ชาร์จ": 1.3, "หูฟัง": 1.3, "แก็ดเจ็ต": 1.3, "มือถือ": 1.3,
 }
@@ -167,11 +167,12 @@ def _load() -> list[dict]:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Lowercase, split into tokens, extract Thai bigrams, drop stopwords.
+    """Lowercase, split into tokens, extract Thai bigrams for short clusters, drop stopwords.
 
-    English/digit tokens kept as-is (min 2 chars). Thai clusters are split
-    into bigrams (e.g. 'หูฟังบลูทูธ' → {'หูฟ', 'ฟัง', 'ังบ', 'บลู', 'ลูท', 'ูธ'})
-    so partial substring matching works against product names.
+    English/digit tokens kept as-is (min 2 chars). Thai clusters get:
+      - Full cluster (if >= 2 chars and not a stopword)
+      - Bigrams ONLY for clusters <= 12 chars (short Thai words like หูฟัง, สุนัข)
+        Long clusters generate too many noisy bigrams that false-match.
     """
     if not text:
         return set()
@@ -182,13 +183,15 @@ def _tokenize(text: str) -> set[str]:
             if len(t) > 1 and t not in _STOPWORDS:
                 result.add(t)
         else:
-            # Thai: add the full cluster if >= 2 chars, plus bigrams
+            # Thai: add the full cluster if >= 2 chars
             if len(t) >= 2 and t not in _STOPWORDS:
                 result.add(t)
-            for i in range(len(t) - 1):
-                bigram = t[i:i + 2]
-                if bigram not in _STOPWORDS:
-                    result.add(bigram)
+            # Bigrams only for short clusters to avoid noise
+            if len(t) <= 12:
+                for i in range(len(t) - 1):
+                    bigram = t[i:i + 2]
+                    if bigram not in _STOPWORDS:
+                        result.add(bigram)
     return result
 
 

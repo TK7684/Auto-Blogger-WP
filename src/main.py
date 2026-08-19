@@ -454,7 +454,7 @@ def run_content_generation(components: Dict, cadence: str = "daily",
             final_content = content_with_affiliate
             wp.update_post(post_id, {"content": final_content})
             affiliate_products = _last_placed_products
-            logger.info(f"🛒 Updated post {post_id} with affiliate cards (sub_id=pedpro-{post_id}, products={len(affiliate_products)})
+            logger.info(f"🛒 Updated post {post_id} with affiliate cards (sub_id=pedpro-{post_id}, products={len(affiliate_products)})")
     except Exception as e:
         logger.warning(f"Affiliate inserter failed (non-blocking): {e}")
 

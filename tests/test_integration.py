@@ -41,14 +41,14 @@ class TestGeminiAPIIntegration(unittest.TestCase):
         print(f"✅ Gemini API Key found: {self.api_key[:10]}...{self.api_key[-4:]}")
 
     def test_02_gemini_flash_daily_content_generation(self):
-        """Test actual content generation with Gemini 2.0 Flash model."""
+        """Test actual content generation with Gemini 2.5 Flash model."""
         if not self.api_key:
             self.skipTest("GEMINI_API_KEY not configured")
 
-        print("\n🧠 Testing Gemini 2.0 Flash for daily content...")
+        print("\n🧠 Testing Gemini 2.5 Flash for daily content...")
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 contents="Write a short 100-word test article about artificial intelligence."
             )
 
@@ -61,14 +61,14 @@ class TestGeminiAPIIntegration(unittest.TestCase):
             self.fail(f"Gemini Flash API call failed: {e}")
 
     def test_03_gemini_pro_weekly_content_generation(self):
-        """Test actual content generation with Gemini 2.5 Pro model."""
+        """Test actual content generation with Gemini 3 Flash model."""
         if not self.api_key:
             self.skipTest("GEMINI_API_KEY not configured")
 
-        print("\n🧠 Testing Gemini 2.5 Pro for weekly content...")
+        print("\n🧠 Testing Gemini 3 Flash for weekly content...")
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.5-pro",
+                model="gemini-3-flash-preview",
                 contents="Write a short 150-word deep dive about quantum computing."
             )
 

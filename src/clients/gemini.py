@@ -464,7 +464,9 @@ class GeminiClient:
         If all models fail, sleeps for 5 minutes before raising, allowing the system to recover from rate limits.
         """
         # Primary model list with fallback options
-        model_fallback_order = [model, "gemini-2.0-flash", "gemini-1.5-flash"]
+        # (2026-08: 2.0-flash/1.5-flash/2.5-flash-lite retired; 2.5-pro is
+        # paid-only. Live free-tier: 2.5-flash, 3-flash-preview.)
+        model_fallback_order = [model, "gemini-2.5-flash", "gemini-3-flash-preview"]
 
         # Build config - avoid thinking_level for models that don't support it
         config_params = {
@@ -509,7 +511,7 @@ class GeminiClient:
             logger.info("🔄 Z.AI failed all models — falling back to Google AI API (Gemini)")
             try:
                 fallback_client = genai.Client(api_key=self.api_key)
-                for fb_model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+                for fb_model in ["gemini-2.5-flash", "gemini-3-flash-preview"]:
                     try:
                         logger.info(f"Trying Google AI fallback model: {fb_model}")
                         response = fallback_client.models.generate_content(

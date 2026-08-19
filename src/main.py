@@ -494,18 +494,11 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     logger.info("✅ Yoast fields updated")
     _notify_discord(meta.seo_title, post_url, meta.meta_description, topic, cadence, final_type)
 
-    # 7c. INDEXNOW — instant indexing ping (Bing/Yandex/Naver/Seznam/Yep).
-    #     Non-blocking: a failed ping must never affect the publish result.
-    try:
-        from src.indexnow import ping as indexnow_ping
-        ok, code, ep = indexnow_ping([post_url], wp_client=wp)
-        if ok:
-            host = (ep or "").split("//")[-1].split("/")[0]
-            logger.info(f"📡 IndexNow accepted ({code}) via {host}")
-        else:
-            logger.warning(f"IndexNow ping not accepted (code={code}) — non-blocking")
-    except Exception as e:
-        logger.warning(f"IndexNow ping failed (non-blocking): {e}")
+    # NOTE 2026-08-19: IndexNow handled SERVER-SIDE by the official WordPress
+    # plugin (indexnow/indexnow-url-submission v1.0.4, active). It serves the
+    # key at site root and pings api.indexnow.org on every publish — no
+    # client-side ping needed here. (Custom src/indexnow.py removed: engines
+    # 422 any non-root keyLocation, e.g. media-library URLs.)
 
     # 8. VERIFY
     if VERIFY_AFTER_PUBLISH:

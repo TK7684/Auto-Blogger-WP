@@ -29,6 +29,10 @@ from urllib.parse import quote, urlencode, urlparse, parse_qs, urlunparse
 
 logger = logging.getLogger(__name__)
 
+# Exposed for callers (main.py) to read the actual products that were placed,
+# avoiding a re-fetch that could return different items.
+_last_placed_products: list[dict] = []
+
 
 def _get_affiliate_id() -> Optional[str]:
     """Return SHOPEE_AFFILIATE_ID or None if unset/blank."""
@@ -453,7 +457,13 @@ def insert_product_cards_at_boundaries(
     return result
 
 
-def _try_fetch_products(topic: str, limit: int = 5, article_text: str = "") -> list[dict]:
+def _try_fetch_products(
+    topic: str,
+    limit: int = 5,
+    article_text: str = "",
+    gemini_client=None,
+    _seed: int = 0,
+) -> list[dict]:
     """Attempt to pull products from the Shopee API. Return [] on any failure.
 
     Resolution order:
@@ -480,11 +490,13 @@ def _try_fetch_products(topic: str, limit: int = 5, article_text: str = "") -> l
     except Exception as e:
         logger.info(f"[affiliate] shopee.search_products unavailable: {e}")
 
-    # 2) Fall back to the curated cache. Same offerLink format (s.shopee.co.th
-    # short links → trackable attribution) so commission still flows.
+    # 2) Fall back to the curated cache with LLM selection + seed rotation.
+    #    Same offerLink format (s.shopee.co.th → trackable attribution) so commission still flows.
     try:
         from src.clients import shopee_curated  # lazy import
-        curated = shopee_curated.search(topic, limit=limit)
+        curated = shopee_curated.search(
+            topic, limit=limit, gemini_client=gemini_client, _seed=_seed,
+        )
         if curated:
             logger.info(
                 f"[affiliate] using curated cache fallback "
@@ -502,6 +514,8 @@ def insert_shopee_card(
     topic: str,
     article_text: str = "",
     post_id: int = 0,
+    gemini_client=None,
+    _seed: int = 0,
 ) -> str:
     """Append a Shopee affiliate CTA card to the article content.
 
@@ -520,7 +534,10 @@ def insert_shopee_card(
         article_text: Full article text for article-aware matching.
         post_id: WordPress post ID — used as part of sub_id for tracking
                  which article drove clicks/conversions.
+        gemini_client: GeminiClient for LLM-powered product selection.
+        _seed: Rotation seed so consecutive posts get different fallback products.
 
+    Sets module-level `_last_placed_products` with the products actually placed.
     Safe to call unconditionally from the pipeline. Never raises.
     """
     if not topic or not topic.strip():
@@ -529,6 +546,9 @@ def insert_shopee_card(
 
     topic_clean = topic.strip()
 
+    global _last_placed_products
+    _last_placed_products = []
+
     try:
         affiliate_id = _get_affiliate_id()
         fixed_links = _get_fixed_links()
@@ -536,14 +556,14 @@ def insert_shopee_card(
         # No auth configured at all — no-op. (Neither API creds work dynamic,
         # nor SHOPEE_AFFILIATE_LINKS short links, nor SHOPEE_AFFILIATE_ID fallback.)
         if not affiliate_id and not fixed_links:
-            products_check = _try_fetch_products(topic_clean, limit=1, article_text=article_text)
+            products_check = _try_fetch_products(topic_clean, limit=1, article_text=article_text, gemini_client=gemini_client, _seed=_seed)
             if not products_check:
                 logger.debug("[affiliate] no auth + no products — skipping")
                 return content
 
         # Build the primary card (dynamic if API returns products, static otherwise)
         search_url = _build_search_url(topic_clean, affiliate_id or "")
-        products = _try_fetch_products(topic_clean, limit=5, article_text=article_text)
+        products = _try_fetch_products(topic_clean, limit=5, article_text=article_text, gemini_client=gemini_client, _seed=_seed)
 
         # Enrich products with sub_id tracking BEFORE rendering any cards.
         # sub_id format: "pedpro-{post_id}" so you can identify the source
@@ -566,6 +586,7 @@ def insert_shopee_card(
                     f"🛒 Shopee affiliate — {mode} (topic='{topic_clean[:40]}', "
                     f"products={len(products)})"
                 )
+                _last_placed_products = products[:3]
                 return primary_card
 
             primary_card = _render_dynamic_card(topic_clean, products, search_url)

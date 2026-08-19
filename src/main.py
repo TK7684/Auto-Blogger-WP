@@ -445,18 +445,16 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     #     drove clicks/conversions in Shopee Affiliate Dashboard → Sub ID report.
     affiliate_products = []
     try:
-        from src.affiliate_inserter import insert_shopee_card, track_product_placements, _try_fetch_products
+        from src.affiliate_inserter import insert_shopee_card, track_product_placements, _last_placed_products
         content_with_affiliate = insert_shopee_card(
             final_content, topic, article_text=final_content, post_id=post_id,
+            gemini_client=gemini, _seed=post_id or int(time.time()),
         )
         if content_with_affiliate != final_content:
-            # Affiliate cards were injected — update the published post
             final_content = content_with_affiliate
             wp.update_post(post_id, {"content": final_content})
-            logger.info(f"🛒 Updated post {post_id} with affiliate cards (sub_id=pedpro-{post_id})")
-
-            # Fetch the products that were placed for tracking
-            affiliate_products = _try_fetch_products(topic, limit=3, article_text=final_content)
+            affiliate_products = _last_placed_products
+            logger.info(f"🛒 Updated post {post_id} with affiliate cards (sub_id=pedpro-{post_id}, products={len(affiliate_products)})
     except Exception as e:
         logger.warning(f"Affiliate inserter failed (non-blocking): {e}")
 
@@ -495,6 +493,19 @@ def run_content_generation(components: Dict, cadence: str = "daily",
     })
     logger.info("✅ Yoast fields updated")
     _notify_discord(meta.seo_title, post_url, meta.meta_description, topic, cadence, final_type)
+
+    # 7c. INDEXNOW — instant indexing ping (Bing/Yandex/Naver/Seznam/Yep).
+    #     Non-blocking: a failed ping must never affect the publish result.
+    try:
+        from src.indexnow import ping as indexnow_ping
+        ok, code, ep = indexnow_ping([post_url], wp_client=wp)
+        if ok:
+            host = (ep or "").split("//")[-1].split("/")[0]
+            logger.info(f"📡 IndexNow accepted ({code}) via {host}")
+        else:
+            logger.warning(f"IndexNow ping not accepted (code={code}) — non-blocking")
+    except Exception as e:
+        logger.warning(f"IndexNow ping failed (non-blocking): {e}")
 
     # 8. VERIFY
     if VERIFY_AFTER_PUBLISH:

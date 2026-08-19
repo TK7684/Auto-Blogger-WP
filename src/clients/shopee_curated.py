@@ -52,9 +52,9 @@ _CACHE_LOCK = threading.Lock()
 _CACHE: Optional[list[dict]] = None
 
 # Token splitter: keeps Thai and English word characters, splits on punctuation
-# and whitespace. Thai words don't have spaces but the productName typically
-# uses spaces between brand/feature/product chunks already.
-_TOKEN_RE = re.compile(r"[A-Za-z0-9฀-๿]+")
+# Token splitter: English/digit words + Thai clusters. Thai has no word
+# boundaries so we capture clusters of Thai chars and generate bigrams.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+|[\u0E00-\u0E4F]+")
 
 # English stopwords commonly found in trending topics that shouldn't drive
 # product matching.
@@ -167,11 +167,29 @@ def _load() -> list[dict]:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Lowercase, split into Thai/English/digit tokens, drop stopwords + 1-char tokens."""
+    """Lowercase, split into tokens, extract Thai bigrams, drop stopwords.
+
+    English/digit tokens kept as-is (min 2 chars). Thai clusters are split
+    into bigrams (e.g. 'หูฟังบลูทูธ' → {'หูฟ', 'ฟัง', 'ังบ', 'บลู', 'ลูท', 'ูธ'})
+    so partial substring matching works against product names.
+    """
     if not text:
         return set()
     tokens = _TOKEN_RE.findall(text.lower())
-    return {t for t in tokens if len(t) > 1 and t not in _STOPWORDS}
+    result: set[str] = set()
+    for t in tokens:
+        if t[0].isascii():
+            if len(t) > 1 and t not in _STOPWORDS:
+                result.add(t)
+        else:
+            # Thai: add the full cluster if >= 2 chars, plus bigrams
+            if len(t) >= 2 and t not in _STOPWORDS:
+                result.add(t)
+            for i in range(len(t) - 1):
+                bigram = t[i:i + 2]
+                if bigram not in _STOPWORDS:
+                    result.add(bigram)
+    return result
 
 
 def _value_score(product: dict) -> float:
@@ -187,16 +205,77 @@ def _value_score(product: dict) -> float:
     return commission * sales
 
 
-def search(keyword: str, limit: int = 3) -> list[dict]:
+def _llm_select_products(
+    topic: str,
+    products: list[dict],
+    limit: int = 3,
+    gemini_client=None,
+) -> list[dict]:
+    """Use the LLM to pick the most relevant products for the article topic.
+
+    Sends topic + product names/prices to the LLM and asks it to return the
+    indices of the best-fitting products. Falls back to empty list on any
+    failure (caller uses existing heuristic).
+    """
+    if not gemini_client or not products or limit <= 0:
+        return []
+
+    product_lines = []
+    for i, p in enumerate(products[:50]):
+        name = (p.get("productName") or "")[:70]
+        price = p.get("price", "")
+        product_lines.append(f"  [{i}] {name} — ฿{price}")
+
+    prompt = (
+        f"Article topic: \"{topic}\"\n\n"
+        f"Select the {limit} products MOST RELEVANT to this article topic. "
+        "Consider: if someone reads about this topic, which products would they "
+        "actually want to buy? Prioritize topical fit over price or sales.\n\n"
+        "Products:\n"
+        + "\n".join(product_lines)
+        + f"\n\nReturn ONLY a JSON array of {limit} indices, e.g. [3, 17, 42]. No explanation."
+    )
+
+    try:
+        import json as _json
+        response = gemini_client.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        if response and hasattr(response, "text") and response.text:
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            indices = _json.loads(text)
+            if isinstance(indices, list) and all(isinstance(i, int) for i in indices):
+                seen = set()
+                selected = []
+                for idx in indices:
+                    if 0 <= idx < len(products) and idx not in seen:
+                        seen.add(idx)
+                        selected.append(products[idx])
+                if selected:
+                    logger.info(
+                        f"[shopee_curated] LLM selected indices {indices} for topic='{topic[:40]}'"
+                    )
+                    return selected[:limit]
+    except Exception as e:
+        logger.debug(f"[shopee_curated] LLM selection failed: {e}")
+
+    return []
+
+
+def search(keyword: str, limit: int = 3, gemini_client=None, _seed: int = 0) -> list[dict]:
     """Return up to `limit` curated products best-matching `keyword`.
 
-    Matching:
-      1. Token-overlap between keyword tokens and productName tokens — primary key.
-      2. Topic expansion matching — bridges English topics to Thai product names.
-      3. Relevance bonus from _RELEVANCE_KEYWORDS matching keyword tokens.
-      4. value_score (commission × sales) — tiebreak / fallback when no overlap.
+    Matching (priority order):
+      1. LLM semantic selection — uses the Gemini client to pick relevant products.
+      2. Token-overlap between keyword bigrams/tokens and productName tokens.
+      3. Topic expansion matching — bridges English topics to Thai product names.
+      4. value_score (commission × sales) — seeded rotation for diversity when no overlap.
 
-    Always returns at most `limit` products and never raises.
+    When `_seed` > 0, the no-match fallback rotates starting position so
+    consecutive posts don't all show the same products.
     """
     products = _load()
     if not products or limit <= 0:
@@ -204,14 +283,19 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
 
     kw_tokens = _tokenize(keyword)
     kw_lower = keyword.lower()
-    
+
+    # 1. LLM selection (best relevance, costs one API call)
+    if gemini_client:
+        llm_picks = _llm_select_products(keyword, products, limit, gemini_client)
+        if llm_picks:
+            return llm_picks
+
     # Build expanded search terms from English keywords
     expanded_terms = set()
     for eng_word, thai_exps in _TOPIC_EXPANSIONS.items():
         if eng_word in kw_lower or eng_word in kw_tokens:
             for exp in thai_exps:
                 expanded_terms.update(_tokenize(exp))
-    # Merge expanded tokens with original keyword tokens
     search_tokens = kw_tokens | expanded_terms
 
     # Calculate relevance bonus from keyword-level matching
@@ -224,15 +308,15 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
     for p in products:
         name_tokens = _tokenize(p.get("productName") or "")
         name_lower = (p.get("productName") or "").lower()
-        
-        # Primary: direct token overlap
+
+        # Primary: direct token overlap (now includes Thai bigrams)
         overlap = len(search_tokens & name_tokens) if search_tokens else 0
-        
+
         # Expansion bonus: partial matches with Thai product names
         expansion_score = 0.0
         for exp_term in expanded_terms:
             if exp_term in name_lower:
-                expansion_score += 0.5  # Moderate boost for expansion matches
+                expansion_score += 0.5
 
         # Product-level relevance: check if product name contains relevance keywords
         product_relevance = 0.0
@@ -241,7 +325,7 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
                 if rkw in name_lower:
                     product_relevance += weight
 
-        # Combined score: overlap * 3 + expansion + category match + relevance
+        # Combined score
         category_match = min(relevance_bonus, product_relevance) if relevance_bonus > 0 else 0
         combined = overlap * 3.0 + expansion_score + category_match
         scored.append((combined, _value_score(p), p))
@@ -249,23 +333,30 @@ def search(keyword: str, limit: int = 3) -> list[dict]:
     scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
 
     has_match = any(s[0] > 0 for s in scored[:limit])
-    selected = [s[2] for s in scored[:limit]]
 
     if has_match:
+        selected = [s[2] for s in scored[:limit]]
         logger.debug(
             "[shopee_curated] keyword=%r expanded=%d matched %d/%d products (score>0)",
             keyword, len(expanded_terms),
             sum(1 for s in scored[:limit] if s[0] > 0), len(selected),
         )
-    else:
-        logger.debug(
-            "[shopee_curated] keyword=%r no match — using top-by-value",
-            keyword,
-        )
+        return selected
+
+    # No match — seeded rotation for diversity (not always the same top-3)
+    n = len(scored)
+    start = _seed % n
+    rotated = scored[start:] + scored[:start]
+    selected = [s[2] for s in rotated[:limit]]
+
+    logger.debug(
+        "[shopee_curated] keyword=%r no match — rotated top-by-value (seed=%d)",
+        keyword, _seed,
+    )
 
     return selected
 
 
 def cache_size() -> int:
-    """Return the count of products in the curated cache. Useful for diagnostics."""
+    """Return the count of products in the curated cache."""
     return len(_load())

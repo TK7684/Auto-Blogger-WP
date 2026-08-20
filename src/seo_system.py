@@ -33,20 +33,43 @@ class SEOPromptBuilder:
         self._load_guidelines()
 
     def _load_guidelines(self):
-        """Load brand guidelines from JSON file."""
+        """Load brand guidelines from JSON file.
+
+        Supports two formats:
+        - Legacy: {"guidelines": [{keywords, strict_facts}, ...]} — keyword match only
+        - Personas v2 (2026-08-20): {"personas": [{id, match_keywords, voice, strict_facts}, ...]}
+          Persona facts are the VOICE SYSTEM: consistent particles (ครับ only —
+          never mix ค่ะ/คะ), Thai slang budget, banned hallucinated words.
+          The 'default' persona always applies (baseline voice rules).
+        """
         self.guidelines = []
+        self._default_persona_facts: list = []
         if os.path.exists(self.guidelines_path):
             try:
                 with open(self.guidelines_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                if "personas" in data:
+                    for p in data["personas"]:
+                        if p.get("id") == "default":
+                            self._default_persona_facts = p.get("strict_facts", [])
+                        else:
+                            self.guidelines.append({
+                                "keywords": p.get("match_keywords", []),
+                                "strict_facts": p.get("strict_facts", []),
+                            })
+                else:
                     self.guidelines = data.get("guidelines", [])
             except Exception as e:
                 logger.error(f"Error loading guidelines: {e}")
 
     def get_applicable_guidelines(self, topic: str, context: str) -> List[str]:
-        """Find guidelines that match keywords in the topic or context."""
+        """Find guidelines that match keywords in the topic or context.
+
+        Always includes the default-persona voice rules (baseline Thai voice
+        consistency), then adds any persona whose keywords match the topic.
+        """
         text = (topic + " " + context).upper()
-        active_facts = []
+        active_facts = list(self._default_persona_facts)
         for g in self.guidelines:
             if any(kw.upper() in text for kw in g.get("keywords", [])):
                 active_facts.extend(g.get("strict_facts", []))
@@ -88,10 +111,16 @@ THAI WRITING STYLE — อ่านสบาย เป็นธรรมชา�
 
 ความเป็นมนุษย์ (Humanity):
 - เขียนแบบ "เล่าเรื่องกับเพื่อน" — เหมือนคนไทยคนนึงนั่งคุยกับเพื่อนตัวเอง ไม่ใช่เขียนรายงาน
-- ใช้คำลงท้ายประโยคแบบธรรมชาติ: นะ, ครับ, ค่ะ, น่า, จริงๆ, เลย, มั้ย, ดีกว่า, อะ สลับไปมาอย่างเป็นธรรมชาติ
+- ใช้คำลงท้ายประโยคแบบธรรมชาติ: นะ, ครับ, น่า, จริงๆ, เลย, มั้ย, ดีกว่า, อะ
+- ⚠️ คำลงท้ายต้องคงเส้นคงวา: บทความหนึ่ง = หนึ่งเสียง ถ้าเป็นผู้ชายใช้ "ครับ" ตลอด ห้ามสลับ ค่ะ/คะ แม้แต่คำเดียว — คนไทยเห็นคำเดียวที่ผิดก็รู้ทันทีว่าไม่ใช่คนเขียน
 - ใช้คำพูดตามสบายเป็นบางประโยค เช่น จริงดิ, ง่ายมากและ, ไม่ต้องกังวล, ลองดูสิ, มาดูกัน, เดี๋ยวเรามาเริ่มกันเลย
 - ใส่รู้สึกจริงเข้าไป: ตกใจเลยครับ, ผมเคยเจอมา, น่าประทับใจมาก, บอกตรงๆ ว่า, ถ้าคิดดีๆ แล้ว
 - เล่าจากประสบการณ์หรือมุมมองจริง — ใช้ "ผมเองก็เคยเจอ", "หลายคนบอกว่า", "จากที่ลองมา"
+
+เสียงตามกลุ่มเป้าหมาย (Voice matching):
+- นึกภาพคนอ่านจริงก่อนเขียน — อายุ งาน ไลฟ์สไตล์ แล้วเลือก "เพื่อนคนนั้น" เป็นคนเล่าเรื่อง
+- ศัพท์วัยรุ่น/Gen Z ไทย ใช้ได้ตามกลุ่ม: ชิลล์, ปัง, แซ่บ, เวิร์ก, เอือม, ติดหู, มีความน่ารัก, ฟิน, เขินอ่ะ — แต่ประมาณ 1-2 คำต่อ section เท่านั้น ให้เป็นเครื่องเทศ ไม่ใช่จานหลัก
+- ถ้าแบรนด์ไกด์ไลน์ (STRICT BRAND GUIDELINES) ระบุเสียง/กลุ่มเป้าหมายไว้ ให้ทำตามนั้นเป็นหลัก
 
 โครงสร้างย่อหน้า (Structure):
 - ย่อหน้าสั้นๆ 2-3 บรรทัด — คนอ่านบนมือถือเยอะ ต้องอ่านง่าย

@@ -60,6 +60,67 @@ IMG_TAG_RE = re.compile(r'<img\b[^>]*\bsrc=["\']([^"\']+)["\']', re.IGNORECASE)
 A_TAG_RE = re.compile(r'<a\b[^>]*\bhref=["\']([^"\']+)["\']', re.IGNORECASE)
 SCHEMA_RE = re.compile(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', re.IGNORECASE | re.DOTALL)
 PLACEHOLDER_RE = re.compile(r'\{\{[^}]+\}\}')
+
+# ---- Thai language quality checks (2026-08-20, post-4856 bug class) -------
+# Deterministic gates for Thai posts. These catch what a native reader spots
+# in seconds: mixed politeness particles (male ครับ + female ค่ะ/คะ in one
+# article = instant bot-tell), and hallucinated Thai words (e.g. 'ลูกหมอก'
+# "fog child" — a non-word the model invented for 'puppy or adult dog').
+_THAI_CHAR_RE = re.compile(r"[\u0E00-\u0E7F]")
+_KRUB_RE = re.compile(r"ครับ")
+_KHA_RE = re.compile(r"ค่ะ")
+_KHA_Q_RE = re.compile(r"คะ")
+
+
+def _is_thai_text(text: str) -> bool:
+    """Thai-dominant if Thai chars ≥ 15% of alpha-ish content (lenient —
+    mixed-script posts with Thai body still qualify)."""
+    if not text:
+        return False
+    thai = len(_THAI_CHAR_RE.findall(text))
+    return thai >= 30 and thai / max(len(text), 1) >= 0.10
+
+
+def _thai_voice_check(content_html: str) -> Tuple[str, str]:
+    """Return (passed, detail) for politeness-particle consistency.
+
+    One article = one voice. A male voice (ครับ) must not also contain
+    female particles (ค่ะ/คะ), and vice versa. Minor counts (< 2) of a
+    secondary particle are tolerated — quotes of a female speaker inside a
+    male-voice article are legitimate Thai writing.
+    """
+    text = _strip_html(content_html)
+    krub = len(_KRUB_RE.findall(text))
+    kha = len(_KHA_RE.findall(text))
+    khaq = len(_KHA_Q_RE.findall(text))
+    female = kha + khaq
+    if krub >= 3 and female >= 2:
+        return "fail", f"particle mix: {krub}×ครับ + {kha}×ค่ะ + {khaq}×คะ — pick ONE voice"
+    if female >= 3 and krub >= 2:
+        return "fail", f"particle mix: {kha}×ค่ะ + {khaq}×คะ + {krub}×ครับ — pick ONE voice"
+    if krub == 0 and female == 0:
+        return "pass", "no politeness particles (ok for neutral tone)"
+    return "pass", f"{krub}×ครับ, {kha}×ค่ะ, {khaq}×คะ — consistent"
+
+
+# Hallucinated-word blacklist: Thai character runs that LOOK like words but
+# don't exist / never used with this meaning. Extend as new ones surface.
+# (A dictionary whitelist approach is overkill — the blacklist targets
+# observed model hallucinations.)
+_HALLUCINATION_BLACKLIST = [
+    "ลูกหมอก",     # "fog child" — invented for 'puppy' (post 4856)
+]
+
+
+def _thai_word_sanity_check(content_html: str) -> Tuple[str, str]:
+    """Return (passed, detail) for hallucinated Thai words."""
+    text = _strip_html(content_html)
+    hits = [w for w in _HALLUCINATION_BLACKLIST if w in text]
+    if hits:
+        return "fail", f"hallucinated words: {hits}"
+    return "pass", "no blacklisted hallucinations"
+
+
 TAG_RE = re.compile(r'<[^>]+>')
 
 
@@ -311,6 +372,31 @@ def verify_post(wp: WordPressClient, post: Dict[str, Any]) -> PostVerdict:
         f"kw='{fk}' in first 200 words" if fk else "no focus keyword set",
         severity="warn",
     ))
+
+    # 11-13. Thai language quality gates (post-4856 bug class)
+    if _is_thai_text(_strip_html(content)):
+        v_pass, v_detail = _thai_voice_check(content)
+        checks.append(Check("thai_voice_consistency", v_pass == "pass", v_detail))
+        w_pass, w_detail = _thai_word_sanity_check(content)
+        checks.append(Check("thai_word_sanity", w_pass == "pass", w_detail))
+        # EN 2-gram leak: an English keyword phrase recurring inside Thai text.
+        # Script/style blocks are removed first — JSON-LD schema legitimately
+        # contains url/@type/pedpro.online in every post (false-positive class).
+        visible = re.sub(r"<script\b.*?</script>|<style\b.*?</style>", " ", content, flags=re.IGNORECASE | re.DOTALL)
+        en_tokens = re.findall(r"[A-Za-z]{2,}", _strip_html(visible))
+        from collections import Counter
+        en_common = [t for t, c in Counter(w.lower() for w in en_tokens).items()
+                     if c >= 5 and t not in {"br", "div", "span", "href", "http", "https"}]
+        if en_common:
+            checks.append(Check(
+                "thai_en_leak",
+                False,
+                f"EN words ×5+: {en_common[:5]} — review: loanwords are fine, "
+                f"leak = broken EN phrase glued inside Thai grammar (การ X ตั้งแต่แรก)",
+                severity="warn",
+            ))
+        else:
+            checks.append(Check("thai_en_leak", True, "no EN flooding"))
 
     # Aggregate status
     failed = [c for c in checks if not c.passed and c.severity == "fail"]

@@ -22,6 +22,7 @@ Env:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 from xml.etree import ElementTree as ET
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -48,6 +50,7 @@ class _Item:
     lang: str = "en"
     article_type: str = "trending"  # trending | research
     _subreddit: str = ""  # for Reddit source filtering
+    _source: str = ""  # "crawler" = pre-vetted crawler-fleet post
 
     def as_tuple(self) -> Trend:
         return (self.topic, self.context, self.lang, self.article_type)
@@ -159,6 +162,86 @@ def _fetch_newsapi(cadence: str = "daily") -> List[_Item]:
         ]
     except Exception as e:
         logger.debug(f"NewsAPI failed: {e}")
+        return []
+
+
+# ---- Crawler fleet (unified.db — pre-vetted high-value posts) --------------
+
+_CRAWLER_DB_PATH = os.environ.get("CRAWLER_DB_PATH", "/home/tk578/crawlers/unified.db")
+# quality_scores.score ≥ 14 = the proven sweet spot (skill: crawler-pipeline
+# "Score scale" — ≥14 with keyword filtering yields ~30-40 high-signal posts).
+_CRAWLER_MIN_SCORE = float(os.environ.get("CRAWLER_MIN_SCORE", "14"))
+_CRAWLER_HOURS = int(os.environ.get("CRAWLER_HOURS", "72"))
+_CRAWLER_LIMIT = int(os.environ.get("CRAWLER_LIMIT", "25"))
+
+
+def _fetch_crawler_posts() -> List[_Item]:
+    """Pull top-scored posts from the local crawler fleet's unified.db.
+
+    These posts are already quality-vetted by the fleet's content_filter
+    (high_value label = real discussions with signal), so they make ideal
+    blog topics. Title → topic, body excerpt → context for the LLM.
+    """
+    if not os.path.exists(_CRAWLER_DB_PATH):
+        logger.debug(f"crawler db not found: {_CRAWLER_DB_PATH}")
+        return []
+    try:
+        import sqlite3
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=_CRAWLER_HOURS)
+        cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+        conn = sqlite3.connect(f"file:{_CRAWLER_DB_PATH}?mode=ro", uri=True, timeout=10)
+        try:
+            rows = conn.execute(
+                """
+                SELECT p.text, p.platform, qs.score, p.scraped_at
+                FROM posts p
+                JOIN quality_scores qs ON qs.post_id = p.post_id
+                WHERE qs.score >= ?
+                  AND p.scraped_at >= ?
+                  AND p.text IS NOT NULL
+                  AND LENGTH(p.text) > 200
+                ORDER BY qs.score DESC
+                LIMIT ?
+                """,
+                (_CRAWLER_MIN_SCORE, cutoff_iso, _CRAWLER_LIMIT * 3),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        items: List[_Item] = []
+        seen_titles: set = set()
+        for text, platform, score, scraped_at in rows:
+            # First line = the post title; rest = body (raw discussion content)
+            lines = [ln.strip() for ln in (text or "").split("\n") if ln.strip()]
+            if not lines:
+                continue
+            title = html.unescape(lines[0])[:110]
+            norm = _normalize_topic_key(title)
+            if not norm or norm in seen_titles:
+                continue
+            seen_titles.add(norm)
+            body = html.unescape(" ".join(lines[1:]))[:1200]
+            if not body:
+                body = f"High-signal {platform} discussion (score {score})"
+            context = (
+                f"SOURCE MATERIAL — top {platform} discussion (quality score {score}/23, "
+                f"scraped {str(scraped_at)[:16]}). Rewrite this for a general audience in simple terms:\n{body}"
+            )
+            items.append(_Item(
+                topic=title,
+                context=context,
+                lang="th" if _THAI_RE.search(title + body[:200]) else "en",
+                article_type="research" if _looks_researchy(title) else "trending",
+                _source="crawler",
+            ))
+            if len(items) >= _CRAWLER_LIMIT:
+                break
+        if items:
+            logger.info(f"[crawler] {len(items)} pre-vetted topics from unified.db (score>={_CRAWLER_MIN_SCORE:.0f})")
+        return items
+    except Exception as e:
+        logger.debug(f"crawler db fetch failed: {e}")
         return []
 
 
@@ -365,7 +448,8 @@ _THAI_RE = re.compile(r"[\u0E00-\u0E7F]")
 _MIN_QUALITY_SCORE = 50.0
 
 
-def _topic_quality_score(topic: str, context: str = "", subreddit: str = "") -> float:
+def _topic_quality_score(topic: str, context: str = "", subreddit: str = "",
+                        source: str = "") -> float:
     """Score a topic on quality from 0-100.
 
     Factors:
@@ -378,6 +462,20 @@ def _topic_quality_score(topic: str, context: str = "", subreddit: str = "") -> 
       - Very short topic (-20)
     """
     score = 10.0  # base score
+
+    # Crawler-fleet posts are pre-vetted by the fleet's own content_filter
+    # (quality_scores ≥ 14 = real high-signal discussion). Reddit-post titles
+    # often trip the blog's own blacklist regexes or length heuristics
+    # ("does anyone", long question titles, etc.) — for pre-vetted posts,
+    # bypass those title heuristics and score on niche/context only.
+    if source == "crawler":
+        base = 40.0
+        niche_matches = len(_NICHE_BOOST_RE.findall(topic))
+        niche_ctx = len(_NICHE_BOOST_RE.findall(context))
+        s = base + min(niche_matches * 15, 40) + min(niche_ctx * 5, 15)
+        if _looks_researchy(topic):
+            s += 20
+        return s
 
     # Auto-reject checks
     if _BLACKLIST_RE.search(topic):
@@ -597,7 +695,8 @@ def _pick(items: List[_Item], target_type: Optional[str] = None) -> Optional[_It
     # Filter by quality score
     qualified = []
     for item in items:
-        score = _topic_quality_score(item.topic, item.context, item._subreddit)
+        score = _topic_quality_score(item.topic, item.context, item._subreddit,
+                                     source=item._source)
         if score >= _MIN_QUALITY_SCORE:
             qualified.append((item, score))
 
@@ -678,13 +777,32 @@ def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = Non
     want_research = article_type == "research" or (
         article_type is None and random.random() < research_pct
     )
+    desired = "research" if want_research else "trending"
+
+    history = _load_history()
+
+    # TOPIC_SOURCE=crawler → derive topics ONLY from the crawler fleet's
+    # pre-vetted high-value posts (unified.db). Falls through to normal
+    # sources if the pool is empty (DB missing / all deduped away).
+    if os.environ.get("TOPIC_SOURCE", "").lower() == "crawler":
+        crawler_pool = _dedup_pool(_fetch_crawler_posts(), history)
+        if crawler_pool:
+            pick = _pick(crawler_pool, desired) or _pick(crawler_pool, None)
+            if pick:
+                _append_history(pick.topic)
+                if target_lang == "th" and pick.lang != "th":
+                    pick.lang = "th"
+                return pick.as_tuple()
+        logger.info("[crawler] pure mode empty after dedup — falling back to normal sources")
 
     pool: List[_Item] = []
     if cadence == "daily":
+        pool.extend(_fetch_crawler_posts())
         pool.extend(_fetch_google_trends_realtime(os.environ.get("TRENDS_GEO", "TH")))
         pool.extend(_fetch_reddit_hot("popular", 10))
         pool.extend(_fetch_newsapi("daily"))
     elif cadence == "weekly":
+        pool.extend(_fetch_crawler_posts())
         pool.extend(_fetch_hn_top("week"))
         pool.extend(_fetch_devto_top("week"))
         pool.extend(_fetch_newsapi("weekly"))
@@ -694,7 +812,6 @@ def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = Non
         pool.extend(_fetch_hn_top("month"))
 
     # Dedup against published-topic history — the fix for "same posts forever"
-    history = _load_history()
     fresh_pool = _dedup_pool(pool, history)
     if fresh_pool:
         pool = fresh_pool

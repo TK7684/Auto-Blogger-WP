@@ -98,6 +98,10 @@ THAI WRITING STYLE — อ่านสบาย เป็นธรรมชา�
 - ใช้ตัวอย่างที่เข้าใจง่าย — เปรียบเทียบกับชีวิตประจำวันคนไทย
 - เชื่อมหัวข้อด้วยคำพูดธรรมชาติ: "มาดูต่อกันดีกว่า", "แล้วไหนล่ะ", "แต่เดี๋ยวก่อน", "ทีนี้มาดูตัวนี้กัน"
 
+อธิบายง่าย (Simple terms):
+- อธิบายทุกอย่างด้วยคำง่ายๆ ที่คนทั่วไปเข้าใจ — ถ้าใช้ศัพท์เทคนิค ต้องอธิบายด้วยภาษาบ้านๆ ต่อทันที พร้อมเปรียบเทียบกับของใกล้ตัวในชีวิตประจำวัน
+- ถ้ามี SOURCE MATERIAL ใน CONTEXT (โพสต์/บทสนทนา) ให้เรียบเรียงใหม่เป็นภาษาง่ายๆ สำหรับคนทั่วไป — ห้ามคัดลอกคำพูด ศัพท์เฉพาะทาง หรือสำนวนของต้นฉบับ
+
 SEO ยังคงต้องมี:
 - ใช้ focus keyword อย่างเป็นธรรมชาติ 5-8 ครั้ง กระจายทั่วบทความ
 - H1 มี focus keyword
@@ -146,6 +150,8 @@ WRITING STYLE — Natural, human voice:
 - End with a genuine thought or recommendation, not a generic summary
 - Use formatting naturally: bold key terms, bullet points for lists, numbered steps for processes
 - 2-3 sentences per paragraph max — easy to read on mobile
+- Explain everything in SIMPLE terms a beginner understands — no jargon without a plain-language explanation right next to it; use everyday analogies from normal life
+- If the CONTEXT contains source material (a discussion/post), rewrite it in your own simple words for a general audience — never copy its phrasing, slang, or insider terms
 """
 
         prompt = f"""
@@ -236,6 +242,8 @@ WRITING STYLE — Natural, human voice for a deep-dive pillar article:
 - Include personal touches: opinions, real observations, "I've found that...", "what surprised me was..."
 - End with a genuine thought or recommendation, not a generic summary
 - 2-3 sentences per paragraph max — easy to read on mobile
+- Explain everything in SIMPLE terms a beginner understands — no jargon without a plain-language explanation right next to it; use everyday analogies from normal life
+- If the CONTEXT contains source material (a discussion/post), rewrite it in your own simple words for a general audience — never copy its phrasing, slang, or insider terms
 """
 
         prompt = f"""

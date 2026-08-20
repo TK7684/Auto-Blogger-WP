@@ -318,5 +318,101 @@ class TestAltTextLanguage(unittest.TestCase):
         self.assertEqual(alt_text, thai_prompt)
 
 
+class TestFluxSafePrompt(unittest.TestCase):
+    """Thai prompts must be translated/stripped before hitting Flux's T5.
+
+    Bug class (post 4856, 2026-08-20): the SEO prompt tells the LLM "all
+    content values in {language}", so Thai articles produce Thai image
+    prompts. Flux's T5 encoder is English-only → renders only the English
+    style suffix → generic petless stock photos on a pet article.
+    """
+
+    def _gen(self, gemini_client=None):
+        return ImageGenerator(gemini_client=gemini_client)
+
+    def test_english_prompt_passthrough(self):
+        gen = self._gen()
+        prompt = "A golden retriever puppy on a couch"
+        self.assertEqual(gen._flux_safe_prompt(prompt), prompt)
+
+    def test_no_client_strips_thai(self):
+        gen = self._gen(gemini_client=None)
+        result = gen._flux_safe_prompt("ภาพอบอุ่นของคนไทยเล่นกับลูกหมา morning light")
+        self.assertNotIn("ภาพ", result)
+        self.assertIn("morning light", result)
+
+    def test_no_client_all_thai_gets_fallback(self):
+        gen = self._gen(gemini_client=None)
+        result = gen._flux_safe_prompt("ภาพอบอุ่นของคนไทยวัยทำงานนั่งเล่นกับลูกหมา")
+        self.assertEqual(result, "editorial blog illustration, warm natural light")
+
+    def test_translation_via_gemini(self):
+        mock = MagicMock()
+        mock.generate_content.return_value.text = (
+            '"Warm photo of a Thai office worker playing with a puppy"  '
+        )
+        gen = self._gen(gemini_client=mock)
+        result = gen._flux_safe_prompt("ภาพอบอุ่นของคนไทยวัยทำงานนั่งเล่นกับลูกหมา")
+        self.assertEqual(result, "Warm photo of a Thai office worker playing with a puppy")
+        # Gemini client actually called
+        mock.generate_content.assert_called_once()
+
+    def test_translation_still_thai_falls_back_to_strip(self):
+        mock = MagicMock()
+        mock.generate_content.return_value.text = "แปลไม่ได้ครับ"
+        gen = self._gen(gemini_client=mock)
+        result = gen._flux_safe_prompt("ภาพแมวนอนบนคอนโดแมว some english words")
+        self.assertNotIn("ภาพ", result)
+        self.assertIn("some english words", result)
+
+    def test_translation_exception_strips(self):
+        mock = MagicMock()
+        mock.generate_content.side_effect = RuntimeError("API down")
+        gen = self._gen(gemini_client=mock)
+        result = gen._flux_safe_prompt("คนพาลูกหมาเดินเล่นในสวน evening walk")
+        self.assertIn("evening walk", result)
+        self.assertNotIn("คนพา", result)
+
+    def test_short_thai_fragments_ignored(self):
+        """1-2 char Thai fragments (typos) shouldn't trigger full translation."""
+        gen = self._gen(gemini_client=None)
+        prompt = "A dog cafe in กรุงเทพ with cats"
+        # กรุงเทพ is 7 Thai chars → triggers. Only <=2 char runs don't.
+        result = gen._flux_safe_prompt(prompt)
+        self.assertNotIn("กรุงเทพ", result)
+
+    def test_batch_workflow_uses_safe_prompt(self):
+        """The batch builder must route prompts through _flux_safe_prompt."""
+        gen = self._gen(gemini_client=None)
+        calls = []
+        original = ImageGenerator._flux_safe_prompt
+
+        def spy(instance, prompt):
+            calls.append(prompt)
+            return original(instance, prompt)
+
+        with patch.object(ImageGenerator, "_flux_safe_prompt", spy):
+            # Drive the batch builder far enough to build the workflow, then
+            # bail at the HTTP submit — we only assert prompt routing.
+            import requests as _requests
+            with patch.object(_requests, "get") as mock_get:
+                stats = MagicMock()
+                stats.status_code = 200
+                stats.json.return_value = {}
+                queue = MagicMock()
+                queue.status_code = 200
+                queue.json.return_value = {"queue_running": [], "queue_pending": []}
+                mock_get.side_effect = [stats, queue]
+                with patch.object(ImageGenerator, "_comfyui_model_exists", return_value=True), \
+                     patch.object(_requests, "post", side_effect=RuntimeError("stop here")):
+                    try:
+                        gen.generate_images_comfyui_batch(
+                            [{"prompt": "ภาพอบอุ่นคนเล่นกับหมาแมว", "aspect": "16:9"}]
+                        )
+                    except Exception:
+                        pass
+        self.assertEqual(calls, ["ภาพอบอุ่นคนเล่นกับหมาแมว"])
+
+
 if __name__ == "__main__":
     unittest.main()

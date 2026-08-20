@@ -542,6 +542,53 @@ class ImageGenerator:
                     return True
         return False
 
+    # Thai-run detection — Thai text is invisible to Flux's T5 encoder, so a
+    # Thai-language prompt degrades to "generic stock photo of whatever the
+    # English style suffix mentions" (bug seen on post 4856: pet article
+    # illustrated with petless portraits of women).
+    _THAI_RUN_RE = re.compile(r"[\u0E00-\u0E7F]{3,}")
+
+    def _flux_safe_prompt(self, prompt: str) -> str:
+        """Return an English prompt for Flux's T5 encoder.
+
+        Flux's text encoder is English-only: Thai tokens contribute ~nothing,
+        so a Thai prompt renders as generic stock imagery unrelated to the
+        topic. If the LLM produced a Thai prompt (it follows the article
+        language), translate it via the Gemini client before encoding.
+        Non-Thai prompts pass through unchanged. On translation failure,
+        fall back to a compact English topic-only prompt rather than sending
+        Thai bytes to T5.
+        """
+        if not self._THAI_RUN_RE.search(prompt or ""):
+            return prompt
+        logger.info("🌐 Thai image prompt detected — translating for Flux T5")
+        translated = None
+        if self.gemini_client:
+            try:
+                response = self.gemini_client.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=(
+                        "Translate this AI image-generation prompt to concise English "
+                        "suitable for a text-to-image model. Keep visual subjects, "
+                        "setting, and mood. Return ONLY the English prompt, no quotes "
+                        "or explanation.\n\nPrompt: " + prompt
+                    ),
+                )
+                text = getattr(response, "text", None) or (
+                    response if isinstance(response, str) else None
+                )
+                if text and text.strip():
+                    translated = re.sub(r"\s+", " ", text.strip().strip('"').strip("'"))
+            except Exception as e:
+                logger.warning(f"⚠️ Thai→EN prompt translation failed: {e}")
+        if translated and not self._THAI_RUN_RE.search(translated):
+            logger.info(f"🌐 Translated prompt: {translated[:120]}")
+            return translated
+        # Last resort: strip Thai runs, keep any English fragments
+        stripped = self._THAI_RUN_RE.sub(" ", prompt)
+        stripped = re.sub(r"\s+", " ", stripped).strip(" .,")
+        return stripped or "editorial blog illustration, warm natural light"
+
     def _comfyui_dimensions(self, aspect: Optional[str]) -> Tuple[int, int]:
         """Resolve (width, height) for a named aspect; defaults to 16:9."""
         if aspect in self._ASPECTS:
@@ -549,7 +596,7 @@ class ImageGenerator:
         return self._ASPECTS["16:9"]
 
     def generate_image(self, prompt: str, mode: str = "daily", content_context: str = None, aspect: str = "16:9") -> Optional[bytes]:
-        """Generate an image with priority: ComfyUI -> OpenRouter -> HuggingFace -> DALL-E -> Gemini Direct.
+        """Generate image with priority: ComfyUI -> OpenRouter -> HuggingFace -> DALL-E -> Gemini Direct.
 
         Args:
             prompt: Base prompt for image generation
@@ -560,8 +607,11 @@ class ImageGenerator:
         Returns:
             Image bytes if successful, None otherwise (graceful fallback)
         """
-        # Enhance prompt with content context if provided
-        enhanced_prompt = self._enhance_prompt_with_context(prompt, content_context)
+        # Non-English prompts are invisible to Flux's T5 encoder — normalize
+        # BEFORE the ComfyUI attempt (and before alt text is derived from it).
+        enhanced_prompt = self._flux_safe_prompt(
+            self._enhance_prompt_with_context(prompt, content_context)
+        )
 
         # 0. Try ComfyUI (Primary - if running locally)
         logger.info("🎨 Attempting ComfyUI (Primary)...")
@@ -765,7 +815,8 @@ Return ONLY the image prompt, no explanation."""
 
         # Flux renders text badly and has no negative-prompt mechanism (CFG 1.0),
         # so append positive style anchors: quality cues + explicit no-lettering.
-        styled_prompt = f"{prompt}. {self.FLUX_STYLE_SUFFIX}"
+        # _flux_safe_prompt Thai→EN-translates first — T5 can't read Thai.
+        styled_prompt = f"{self._flux_safe_prompt(prompt)}. {self.FLUX_STYLE_SUFFIX}"
 
         workflow = {
             "1": {
@@ -983,7 +1034,7 @@ Return ONLY the image prompt, no explanation."""
         }
         save_nodes: List[str] = []
         for i, job in enumerate(jobs):
-            prompt = f"{job['prompt']}. {self.FLUX_STYLE_SUFFIX}"
+            prompt = f"{self._flux_safe_prompt(job['prompt'])}. {self.FLUX_STYLE_SUFFIX}"
             width, height = self._comfyui_dimensions(job.get("aspect"))
             te, fg, li, ks, vd, si = (str(10 + i), str(20 + i), str(30 + i), str(40 + i), str(50 + i), str(60 + i))
             workflow[te] = {"inputs": {"text": prompt, "clip": ["2", 0]}, "class_type": "CLIPTextEncode"}

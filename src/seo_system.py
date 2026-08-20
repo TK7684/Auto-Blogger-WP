@@ -207,6 +207,8 @@ Return ONLY valid JSON with ALL these required fields:
 - image_prompt: description for featured image generation
 - in_article_image_prompts: array of 3 image descriptions for inline images
 
+IMAGE PROMPT LANGUAGE RULE: image_prompt and in_article_image_prompts MUST ALWAYS be written in ENGLISH, even when the article language is Thai — the image model's text encoder only understands English. Describe the same scene you would show a Thai reader, but in English words.
+
 CONTENT REQUIREMENTS:
 HTML format with H1 heading, 3-5 H2 sections, short paragraphs (max 3 sentences each)
 Hook the reader with a relatable scenario, surprising fact, or personal observation (NOT "Did you know...?" or "In today's world...")
@@ -404,7 +406,7 @@ TONE:
 OUTPUT:
 After the content, provide:
 ```
-IMAGE_PROMPT: [Create a professional, modern 16:9 featured image for: {topic}. Style: premium business/tech publication. High resolution.]
+IMAGE_PROMPT: [Create a professional, modern 16:9 featured image for: {topic}. Style: premium business/tech publication. High resolution. Write the image description in ENGLISH even if the article is in Thai — the image model's encoder reads English only.]
 RELATED_TOPICS: [3-5 related topic suggestions for internal linking]
 INTERNAL_LINKS: [3-5 internal link opportunities with anchor text]
 ```

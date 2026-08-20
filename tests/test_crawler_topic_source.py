@@ -152,7 +152,20 @@ class TestCrawlerQualityBoost:
 
 class TestPureCrawlerMode:
 
-    def test_pure_mode_picks_crawler_topic(self, clean_env, monkeypatch):
+    def test_crawler_is_default_source(self, clean_env, monkeypatch):
+        # no TOPIC_SOURCE set — crawler is now the DEFAULT primary source
+        monkeypatch.delenv("TOPIC_SOURCE", raising=False)
+        topic, context, lang, atype = ts.get_trending_topic("daily")
+        assert context.startswith("SOURCE MATERIAL")
+
+    def test_opt_out_via_topic_source_normal(self, clean_env, monkeypatch):
+        monkeypatch.setenv("TOPIC_SOURCE", "normal")
+        # all external fetchers stubbed empty → evergreen fallback
+        topic, context, lang, atype = ts.get_trending_topic("daily")
+        assert topic
+        assert not context.startswith("SOURCE MATERIAL")
+
+    def test_crawler_mode_picks_crawler_topic(self, clean_env, monkeypatch):
         monkeypatch.setenv("TOPIC_SOURCE", "crawler")
         topic, context, lang, atype = ts.get_trending_topic("daily")
         assert topic in (

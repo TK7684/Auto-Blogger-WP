@@ -781,10 +781,11 @@ def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = Non
 
     history = _load_history()
 
-    # TOPIC_SOURCE=crawler → derive topics ONLY from the crawler fleet's
-    # pre-vetted high-value posts (unified.db). Falls through to normal
-    # sources if the pool is empty (DB missing / all deduped away).
-    if os.environ.get("TOPIC_SOURCE", "").lower() == "crawler":
+    # Crawler-fleet posts are the PRIMARY topic source (TK 2026-08-20 directive:
+    # blog content derives from the crawler fleet's high-value posts, rewritten
+    # in simple terms). Falls through to normal sources if the pool is empty
+    # (DB missing / all deduped). Set TOPIC_SOURCE=normal to opt out.
+    if os.environ.get("TOPIC_SOURCE", "crawler").lower() != "normal":
         crawler_pool = _dedup_pool(_fetch_crawler_posts(), history)
         if crawler_pool:
             pick = _pick(crawler_pool, desired) or _pick(crawler_pool, None)
@@ -793,16 +794,19 @@ def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = Non
                 if target_lang == "th" and pick.lang != "th":
                     pick.lang = "th"
                 return pick.as_tuple()
-        logger.info("[crawler] pure mode empty after dedup — falling back to normal sources")
+        logger.info("[crawler] crawler pool empty after dedup — falling back to normal sources")
 
     pool: List[_Item] = []
+    crawler_enabled = os.environ.get("TOPIC_SOURCE", "crawler").lower() != "normal"
     if cadence == "daily":
-        pool.extend(_fetch_crawler_posts())
+        if crawler_enabled:
+            pool.extend(_fetch_crawler_posts())
         pool.extend(_fetch_google_trends_realtime(os.environ.get("TRENDS_GEO", "TH")))
         pool.extend(_fetch_reddit_hot("popular", 10))
         pool.extend(_fetch_newsapi("daily"))
     elif cadence == "weekly":
-        pool.extend(_fetch_crawler_posts())
+        if crawler_enabled:
+            pool.extend(_fetch_crawler_posts())
         pool.extend(_fetch_hn_top("week"))
         pool.extend(_fetch_devto_top("week"))
         pool.extend(_fetch_newsapi("weekly"))

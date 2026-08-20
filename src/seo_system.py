@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Thai-script segment extraction — matches runs of Thai chars (+ common
+# combining marks/spaces between Thai words) for focus-keyword extraction.
+_THAI_TOPIC_RE = re.compile(r"[\u0E00-\u0E7F][\u0E00-\u0E7F\s]*[\u0E00-\u0E7F]|[\u0E00-\u0E7F]")
+
 
 class SEOPromptBuilder:
     """Builds SEO-optimized prompts for content generation."""
@@ -50,11 +54,23 @@ class SEOPromptBuilder:
 
     def extract_focus_keyword(self, topic: str) -> str:
         """Extract the primary focus keyword from the topic."""
+        # Thai topic → keyword must be Thai. Use the longest Thai-script run
+        # in the title — never transliterate/mix English in.
+        thai_runs = _THAI_TOPIC_RE.findall(topic)
+        if thai_runs:
+            best = max(thai_runs, key=lambda s: len(s.strip()))
+            return best.strip()[:40]
         # Remove common stopwords and get the main phrase
         stopwords = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
                      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
                      'should', 'may', 'might', 'must', 'what', 'when', 'where', 'why', 'how',
-                     'and', 'or', 'but', 'if', 'then', 'else', 'so', 'because', 'although'}
+                     'and', 'or', 'but', 'if', 'then', 'else', 'so', 'because', 'although',
+                     # pronouns + function words — without these, titles like
+                     # "Why You Should Reject X" yield the keyword "you reject"
+                     'i', 'you', 'your', 'we', 'our', 'they', 'their', 'my', 'me', 'us',
+                     'it', 'its', 'this', 'that', 'these', 'those',
+                     'to', 'of', 'in', 'on', 'for', 'with', 'at', 'by', 'from', 'about',
+                     'not', 'never', 'can', 'cannot', 'really', 'genuinely', 'actually'}
 
         words = topic.lower().split()
         keywords = [w for w in words if w not in stopwords and len(w) > 2]
@@ -108,6 +124,22 @@ SEO ยังคงต้องมี:
 - ยังคงมี FAQ 3-5 คำถาม แต่เขียนแบบคนตอบจริง สั้น กระชับ ใส่คำลงท้าย
 """
 
+    def _focus_kw_instruction(self, focus_keyword: str, language: str) -> str:
+        """Cross-language guard: EN-derived keyword in a Thai article must be
+        translated by the LLM — never inserted verbatim into Thai text
+        (bug seen on post 4843: 'you reject' stuffed into Thai 13×)."""
+        if language == "Thai" and not _THAI_TOPIC_RE.search(focus_keyword):
+            return (
+                "\nFOCUS KEYWORD TRANSLATION REQUIRED: The topic-derived keyword "
+                f"\"{focus_keyword}\" is in English, but this article must be in Thai. "
+                "Choose a natural Thai equivalent phrase (2-4 words Thai people would "
+                "actually type into Google Search) and use THAT Thai phrase as the focus "
+                "keyword everywhere — seo_title, meta_description, the focus_keyword JSON "
+                "field, and 5-8 natural mentions in the content. NEVER insert the English "
+                "keyword into the Thai text.\n"
+            )
+        return ""
+
     def build_daily_prompt(self, topic: str, context: str,
                           competitor_insights: Optional[str] = None,
                           language: str = "English",
@@ -153,6 +185,7 @@ WRITING STYLE — Natural, human voice:
 - Explain everything in SIMPLE terms a beginner understands — no jargon without a plain-language explanation right next to it; use everyday analogies from normal life
 - If the CONTEXT contains source material (a discussion/post), rewrite it in your own simple words for a general audience — never copy its phrasing, slang, or insider terms
 """
+        style_block += self._focus_kw_instruction(focus_keyword, language)
 
         prompt = f"""
 Write an SEO blog post in {language} about:
@@ -245,6 +278,7 @@ WRITING STYLE — Natural, human voice for a deep-dive pillar article:
 - Explain everything in SIMPLE terms a beginner understands — no jargon without a plain-language explanation right next to it; use everyday analogies from normal life
 - If the CONTEXT contains source material (a discussion/post), rewrite it in your own simple words for a general audience — never copy its phrasing, slang, or insider terms
 """
+        style_block += self._focus_kw_instruction(focus_keyword, language)
 
         prompt = f"""
 Write a comprehensive pillar content article in {language} about:

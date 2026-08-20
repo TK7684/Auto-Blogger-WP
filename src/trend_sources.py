@@ -54,6 +54,12 @@ class _Item:
 
 
 UA = {"User-Agent": os.environ.get("REDDIT_UA", "Auto-Blogger-WP/1.0 (+https://pedpro.online)")}
+# Reddit 403s script UAs — use a browser UA for reddit.com requests.
+_REDDIT_UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Accept": "application/json",
+}
 TIMEOUT = 15
 
 
@@ -61,7 +67,9 @@ TIMEOUT = 15
 
 def _fetch_google_trends_realtime(geo: str = "US") -> List[_Item]:
     """Google Trends realtime RSS. No API key required."""
-    url = f"https://trends.google.com/trends/trendingsearches/daily/rss?geo={geo}"
+    # NOTE: the legacy /trends/trendingsearches/daily/rss endpoint now 404s.
+    # Current working endpoint (verified 2026-08-20): /trending/rss
+    url = f"https://trends.google.com/trending/rss?geo={geo}"
     try:
         r = requests.get(url, headers=UA, timeout=TIMEOUT)
         if r.status_code != 200:
@@ -74,9 +82,12 @@ def _fetch_google_trends_realtime(geo: str = "US") -> List[_Item]:
             if title_el is None or not title_el.text:
                 continue
             desc = (desc_el.text if desc_el is not None else "") or ""
+            topic_txt = title_el.text.strip()
             items.append(_Item(
-                topic=title_el.text.strip(),
+                topic=topic_txt,
                 context=re.sub(r"<[^>]+>", " ", desc).strip()[:400] or f"Trending now in {geo}",
+                # Thai-script trends → Thai articles (matches blog audience)
+                lang="th" if _THAI_RE.search(topic_txt) else "en",
                 article_type="trending",
             ))
         return items
@@ -87,9 +98,11 @@ def _fetch_google_trends_realtime(geo: str = "US") -> List[_Item]:
 
 def _fetch_reddit_hot(subreddit: str = "popular", limit: int = 10) -> List[_Item]:
     """Reddit JSON endpoint — no auth, rate-limited but fine for low volume."""
-    url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit}"
+    # NOTE: www.reddit.com and api.reddit.com return 403 for script UAs now.
+    # old.reddit.com hot.json still serves JSON with a browser UA (verified 2026-08-20).
+    url = f"https://old.reddit.com/r/{subreddit}/hot.json?limit={limit}"
     try:
-        r = requests.get(url, headers=UA, timeout=TIMEOUT)
+        r = requests.get(url, headers=_REDDIT_UA, timeout=TIMEOUT)
         if r.status_code != 200:
             return []
         items: List[_Item] = []
@@ -333,10 +346,20 @@ _NICHE_BOOST_RE = re.compile(
     r"pet|dog|cat|animal|"
     r"food|recipe|cooking|"
     r"education|learning|course|"
-    r"design|UX|UI|creativ)"
+    r"design|UX|UI|creativ|"
+    # Thai niche keywords — pedpro audience is Thai-primary
+    r"สุนัข|แมว|สัตว์เลี้ยง|อาหารเสริม|สุขภาพ|ผิว|ความงาม|แฟชั่น|เสื้อผ้า|"
+    r"อาหาร|ทำอาหาร|ครัว|ขนม|ลดน้ำหนัก|ออกกำลังกาย|ฟิตเนส|"
+    r"การเงิน|ลงทุน|เงิน|ออม|ประกัน|ภาษี|ธุรกิจ|ขายของออนไลน์|ร้านค้า|"
+    r"เทคโนโลยี|แอป|มือถือ|คอมพิวเตอร์|AI|เกม|หูฟัง|"
+    r"บ้าน|ตกแต่ง|ทำความสะอาด|จัดเก็บ|เด็ก|ทารก|แม่และเด็ก|"
+    r"ท่องเที่ยว|เที่ยว|กิน|ร้านอาหาร|เมนู|สูตร)"
     r"\b",
     re.IGNORECASE,
 )
+
+# Thai script detection
+_THAI_RE = re.compile(r"[\u0E00-\u0E7F]")
 
 # Minimum quality score threshold (0-100). Topics below this are rejected.
 _MIN_QUALITY_SCORE = 50.0
@@ -366,6 +389,13 @@ def _topic_quality_score(topic: str, context: str = "", subreddit: str = "") -> 
     niche_matches = len(_NICHE_BOOST_RE.findall(topic))
     score += min(niche_matches * 15, 40)
 
+    # Thai-language topics get a geo-relevance boost: they come from
+    # TRENDS_GEO=TH (what Thai people search RIGHT NOW) and match the
+    # blog's Thai-primary audience. English-only scoring starves the
+    # pipeline of every Thai trend (base 10 + length never reaches 50).
+    if _THAI_RE.search(topic):
+        score += 15
+
     # Also check context for niche signals
     niche_ctx = len(_NICHE_BOOST_RE.findall(context))
     score += min(niche_ctx * 5, 15)
@@ -374,13 +404,22 @@ def _topic_quality_score(topic: str, context: str = "", subreddit: str = "") -> 
     if _looks_researchy(topic):
         score += 20
 
-    # Reasonable length (3+ words is ideal, not too long)
-    word_count = len(topic.split())
-    if 3 <= word_count <= 12:
+    # Reasonable length (3+ words is ideal, not too long).
+    # Thai has no spaces — use character length for Thai text (8-60 chars is a
+    # normal Thai headline), word count for English.
+    if _THAI_RE.search(topic):
+        score += 15 if 8 <= len(topic) <= 60 else 0
+        word_ok = 8 <= len(topic) <= 60
+    else:
+        word_count = len(topic.split())
+        word_ok = 3 <= word_count <= 12
+    if word_ok:
         score += 15
-    elif 2 <= word_count:
+    elif _THAI_RE.search(topic):
+        score += 8  # Thai outside ideal length — still give partial credit
+    elif len(topic.split()) >= 2:
         score += 8
-    elif word_count > 12:
+    elif len(topic.split()) > 12:
         score += 5  # long but could be descriptive
 
     # Context depth (longer context = more substance)
@@ -489,6 +528,61 @@ def _evergreen() -> List[_Item]:
     ]
 
 
+# ---- Published-topic history (dedup) ----------------------------------------
+
+_HISTORY_PATH = Path(__file__).resolve().parent.parent / "data" / "topic_history.json"
+_HISTORY_LIMIT = 120  # remember last N topics — long enough to avoid repeats
+
+
+def _load_history() -> set:
+    """Load set of previously published topic keys (lowercased)."""
+    try:
+        with open(_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {t.lower() for t in data if isinstance(t, str)}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return set()
+
+
+def _append_history(topic: str) -> None:
+    """Record a published topic. Best-effort — never raises."""
+    try:
+        _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(_HISTORY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            data = []
+        if not isinstance(data, list):
+            data = []
+        data.append(topic)
+        # Keep only the newest N
+        data = data[-_HISTORY_LIMIT:]
+        with open(_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        logger.debug(f"topic history write failed: {e}")
+
+
+def _normalize_topic_key(topic: str) -> str:
+    """Normalize a topic for dedup comparison: lowercase, strip punctuation/digits, collapse spaces."""
+    t = re.sub(r"[^\w\s]", "", (topic or "").lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _dedup_pool(items: List[_Item], history: set) -> List[_Item]:
+    """Filter out items whose normalized key was already published."""
+    seen: set = set()
+    result = []
+    for it in items:
+        key = _normalize_topic_key(it.topic)
+        if key in history or key in seen:
+            continue
+        seen.add(key)
+        result.append(it)
+    return result
+
+
 # ---- Public API -----------------------------------------------------------
 
 def _pick(items: List[_Item], target_type: Optional[str] = None) -> Optional[_Item]:
@@ -587,7 +681,7 @@ def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = Non
 
     pool: List[_Item] = []
     if cadence == "daily":
-        pool.extend(_fetch_google_trends_realtime(os.environ.get("TRENDS_GEO", "US")))
+        pool.extend(_fetch_google_trends_realtime(os.environ.get("TRENDS_GEO", "TH")))
         pool.extend(_fetch_reddit_hot("popular", 10))
         pool.extend(_fetch_newsapi("daily"))
     elif cadence == "weekly":
@@ -599,14 +693,32 @@ def get_trending_topic(cadence: str = "daily", article_type: Optional[str] = Non
         pool.extend(_fetch_pubmed_trending())
         pool.extend(_fetch_hn_top("month"))
 
+    # Dedup against published-topic history — the fix for "same posts forever"
+    history = _load_history()
+    fresh_pool = _dedup_pool(pool, history)
+    if fresh_pool:
+        pool = fresh_pool
+    else:
+        logger.info(
+            f"[dedup] all {len(pool)} fetched topics already published — "
+            f"falling back to full pool (repeat risk)"
+        )
+
     desired = "research" if want_research else "trending"
     pick = _pick(pool, desired)
     if pick is None:
         # Fallback path: try the *other* type
         pick = _pick(pool, None)
     if pick is None:
-        # Last-resort evergreen
-        pick = _pick(_evergreen(), desired) or _evergreen()[0]
+        # Evergreen fallback — also deduped
+        evergreen = _dedup_pool(_evergreen(), history)
+        if not evergreen:
+            evergreen = _evergreen()  # all used up → allow repeats
+            logger.info("[dedup] evergreen pool exhausted — allowing repeats")
+        pick = _pick(evergreen, desired) or evergreen[0]
+
+    # Record the picked topic so it's excluded next time
+    _append_history(pick.topic)
 
     # target_lang overrides only if not already Thai
     if target_lang == "th" and pick.lang != "th":

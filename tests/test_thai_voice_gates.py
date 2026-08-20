@@ -90,3 +90,20 @@ class TestWordSanity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestKhaFalsePositiveGuard(unittest.TestCase):
+    """โยคะ (yoga) ends in คะ but is NOT a female particle."""
+
+    def test_yoga_not_counted(self):
+        html = _p("สวัสดีครับ วันนี้มาคุยเรื่องโยคะกันครับ",
+                  "โยคะช่วยคลายเครียดได้ดีครับ ลองดูครับ")
+        passed, detail = _thai_voice_check(html)
+        self.assertEqual(passed, "pass")
+
+    def test_real_female_kha_still_counted(self):
+        html = _p("สวัสดีครับ แนะนำแมวครับ ดูแลง่ายครับ",
+                  "เหมาะกับคนทำงานเยอะคะ",
+                  "ลองดูที่เทศบาลนะคะ")
+        passed, detail = _thai_voice_check(html)
+        self.assertEqual(passed, "fail")

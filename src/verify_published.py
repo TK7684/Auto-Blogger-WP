@@ -69,7 +69,18 @@ PLACEHOLDER_RE = re.compile(r'\{\{[^}]+\}\}')
 _THAI_CHAR_RE = re.compile(r"[\u0E00-\u0E7F]")
 _KRUB_RE = re.compile(r"ครับ")
 _KHA_RE = re.compile(r"ค่ะ")
+# คะ as the female question particle. Words that merely END in คะ (โยคะ
+# "yoga") are not particles — subtract them (a lookbehind approach would
+# also break นะคะ, the most common female form, since นะ is a Thai char).
+_KHA_NON_PARTICLES = ["โยคะ"]
 _KHA_Q_RE = re.compile(r"คะ")
+
+
+def _count_female_kha_q(text: str) -> int:
+    total = len(_KHA_Q_RE.findall(text))
+    for w in _KHA_NON_PARTICLES:
+        total -= text.count(w)
+    return max(total, 0)
 
 
 def _is_thai_text(text: str) -> bool:
@@ -92,7 +103,7 @@ def _thai_voice_check(content_html: str) -> Tuple[str, str]:
     text = _strip_html(content_html)
     krub = len(_KRUB_RE.findall(text))
     kha = len(_KHA_RE.findall(text))
-    khaq = len(_KHA_Q_RE.findall(text))
+    khaq = _count_female_kha_q(text)
     female = kha + khaq
     if krub >= 3 and female >= 2:
         return "fail", f"particle mix: {krub}×ครับ + {kha}×ค่ะ + {khaq}×คะ — pick ONE voice"

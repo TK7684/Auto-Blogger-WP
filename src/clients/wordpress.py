@@ -23,7 +23,12 @@ class WordPressClient:
             auth = f"{wp_user}:{wp_app_password}"
             self.token = base64.b64encode(auth.encode()).decode('utf-8')
             self.headers = {
-                "Authorization": f"Basic {self.token}"
+                "Authorization": f"Basic {self.token}",
+                # 2026-09-14: pedpro.online sits behind Cloudflare, which blocks
+                # the default python-requests UA with error 1010 (post creates
+                # 429/403'd while some GETs slipped through). Browser UA required.
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept": "application/json",
             }
         else:
             self.headers = {}
